@@ -1,0 +1,63 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+
+spring:
+  application:
+    name: aigen-studio-backend
+
+  datasource:
+    url: jdbc:h2:file:/Users/admin/IdeaProjects/aigen_studio/data/aigendb;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: password
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+        dialect: org.hibernate.dialect.H2Dialect
+
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+      settings:
+        web-allow-others: true
+
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+
+# iFlow Configuration
+iflow:
+  sdk:
+    endpoint: https://platform.iflow.cn
+    api-key: ${IFLOW_API_KEY:sk-53b6922f314b9738c8083aabb2f7ceda}
+    timeout: 300000  # 5 minutes
+    auto-start-process: true
+    file-access: true
+    file-read-only: false
+    file-max-size: 104857600  # 100MB
+    output-dir: ${IFLOW_OUTPUT_DIR:../../generated-code}
+    permission-mode: AUTO
+
+# GitLab Configuration
+gitlab:
+  url: https://git.longhu.net
+  token: arQpM9sBnLoDthVMNz_L
+  base-path: AIGen
+  timeout: 600000  # 10 minutes
+
+# Logging
+logging:
+  level:
+    com.aigen.studio: INFO
+    org.springframework.web: INFO
+    org.hibernate.SQL: ERROR
+    org.hibernate.type.descriptor.sql.BasicBinder: ERROR
