@@ -78,7 +78,6 @@ import {
 import { fileApi, type FileNode } from '../api/job'
 
 interface Props {
-  jobId?: number
   conversationId?: number
   selectedFile: FileNode | null
 }
@@ -125,9 +124,11 @@ const loadFileContent = async (filePath: string) => {
   editedContent.value = ''
 
   try {
-    const response = props.conversationId
-      ? await fileApi.getConversationFileContent(props.conversationId, filePath)
-      : await fileApi.getFileContent(props.jobId as number, filePath)
+    if (!props.conversationId) {
+      error.value = '请先创建对话'
+      return
+    }
+    const response = await fileApi.getConversationFileContent(props.conversationId, filePath)
     if (response.data.success && response.data.content !== undefined) {
       content.value = response.data.content || ''
       editedContent.value = response.data.content || ''

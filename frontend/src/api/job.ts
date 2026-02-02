@@ -1,21 +1,5 @@
 import api from './index'
 
-export interface GenerationJob {
-  id: number
-  requirementId: number
-  irDocumentId: number
-  jobCode: string
-  status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED'
-  logOutput: string | null
-  gitlabBranch: string | null
-  gitlabCommitId: string | null
-  gitlabPipelineId: string | null
-  errorMessage: string | null
-  createdBy: string
-  createdAt: string
-  updatedAt: string
-}
-
 export interface Message {
   id: number
   role: string
@@ -35,23 +19,11 @@ export interface ToolCall {
   icon?: string
 }
 
-export interface TodoItem {
-  id: number
-  title: string
-  description: string
-  status: string
-  order: number
-  moduleName: string
-  featureName: string
-}
-
 export interface Conversation {
   id: number
-  projectId?: string
   projectName: string
   status: string
   stage?: string
-  jobId?: number
   userRequirement?: string
   aiUnderstanding?: string
   understandingConfirmed?: boolean
@@ -62,7 +34,6 @@ export interface Conversation {
   createdAt: string
   updatedAt: string
   messages: Message[]
-  todos: TodoItem[]
 }
 
 export interface FileNode {
@@ -102,68 +73,7 @@ export interface PreviewStatus {
   message?: string
 }
 
-export const jobApi = {
-  getAll: (status?: string) => {
-    const params = status ? { status } : {}
-    return api.get<GenerationJob[]>('/generation-jobs', { params })
-  },
-
-  getById: (id: number) => {
-    return api.get<GenerationJob>(`/generation-jobs/${id}`)
-  },
-
-  getByRequirementId: (requirementId: number) => {
-    return api.get<GenerationJob[]>(`/generation-jobs/requirement/${requirementId}`)
-  },
-
-  create: (requirementId: number, irDocumentId: number) => {
-    return api.post<GenerationJob>('/generation-jobs', null, {
-      params: { requirementId, irDocumentId }
-    })
-  },
-
-  execute: (id: number) => {
-    return api.post(`/generation-jobs/${id}/execute`)
-  },
-
-  getConversation: (id: number) => {
-    return api.get<Conversation>(`/generation-jobs/${id}/conversation`)
-  }
-}
-
 export const conversationApi = {
-  createConversation: (jobId: number) => {
-    return api.post<Conversation>('/conversations', null, {
-      params: { jobId }
-    })
-  },
-
-  getConversation: (id: number) => {
-    return api.get<Conversation>(`/conversations/${id}`)
-  },
-
-  getConversationByJobId: (jobId: number) => {
-    return api.get<Conversation>(`/conversations/job/${jobId}`)
-  },
-
-  sendMessage: (conversationId: number, message: Message) => {
-    return api.post<Message>(`/conversations/${conversationId}/messages`, message)
-  },
-
-  getMessages: (conversationId: number) => {
-    return api.get<Message[]>(`/conversations/${conversationId}/messages`)
-  },
-
-  getTodosByJobId: (jobId: number) => {
-    return api.get<TodoItem[]>(`/conversations/job/${jobId}/todos`)
-  },
-
-  updateTodoStatus: (jobId: number, todoId: number, status: string) => {
-    return api.put<TodoItem>(`/conversations/job/${jobId}/todos/${todoId}`, null, {
-      params: { status }
-    })
-  },
-
   // ==================== 独立对话流程 API ====================
 
   createNewConversation: (createdBy: string = 'user') => {
@@ -194,21 +104,7 @@ export const conversationApi = {
   }
 }
 
-export const getConversation = (id: number) => {
-  return jobApi.getConversation(id).then(res => res.data)
-}
-
 export const fileApi = {
-  getFileTree: (jobId: number) => {
-    return api.get<FileNode[]>(`/files/job/${jobId}/tree`)
-  },
-
-  getFileContent: (jobId: number, filePath: string) => {
-    return api.get<FileContent>(`/files/job/${jobId}/content`, {
-      params: { filePath }
-    })
-  },
-
   getConversationFileTree: (conversationId: number) => {
     return api.get<FileNode[]>(`/files/conversation/${conversationId}/tree`)
   },

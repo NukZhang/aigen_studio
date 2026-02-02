@@ -15,30 +15,7 @@
             <el-icon><HomeFilled /></el-icon>
             <span class="menu-label">工作区</span>
           </div>
-          <div
-            class="menu-item"
-            :class="{ active: currentRoute === 'requirements' }"
-            @click="navigateTo('requirements')"
-          >
-            <el-icon><Document /></el-icon>
-            <span class="menu-label">需求</span>
-          </div>
-          <div
-            class="menu-item"
-            :class="{ active: currentRoute === 'jobs' }"
-            @click="navigateTo('jobs')"
-          >
-            <el-icon><List /></el-icon>
-            <span class="menu-label">作业</span>
-          </div>
-          <div
-            class="menu-item"
-            :class="{ active: currentRoute === 'artifacts' }"
-            @click="navigateTo('artifacts')"
-          >
-            <el-icon><Folder /></el-icon>
-            <span class="menu-label">产出物</span>
-          </div>
+          
         </div>
       </el-aside>
 
@@ -55,7 +32,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { HomeFilled, Document, List, Folder } from '@element-plus/icons-vue'
+import { HomeFilled } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -63,9 +40,6 @@ const router = useRouter()
 const currentRoute = computed(() => {
   const path = route.path
   if (path.startsWith('/workspace')) return 'workspace'
-  if (path.startsWith('/requirements')) return 'requirements'
-  if (path.startsWith('/jobs')) return 'jobs'
-  if (path.startsWith('/artifacts')) return 'artifacts'
   return 'workspace'
 })
 

@@ -64,9 +64,7 @@
       <div class="chat-history" ref="chatHistoryRef">
         <div v-if="!conversation || conversation.messages.length === 0" class="empty-state">
           <el-icon size="48"><ChatDotRound /></el-icon>
-          <p v-if="jobId">开始新的对话，让 AI 帮助你开发应用</p>
-          <p v-else-if="!isNewConversationMode">请先从作业列表中选择一个作业，或创建新的作业</p>
-          <p v-else>点击"新建对话"开始创建一个新的应用项目</p>
+          <p>点击"新建对话"开始创建一个新的应用项目</p>
         </div>
 
         <div v-else class="messages">
@@ -148,43 +146,16 @@
         </div>
       </div>
 
-      <!-- 待办事项 -->
-      <div class="todo-panel" v-if="conversation && conversation.todos && conversation.todos.length > 0">
-        <div class="todo-header">
-          <el-icon><List /></el-icon>
-          <span>待办事项 ({{ conversation.todos.filter(t => t.status !== 'completed').length }}/{{ conversation.todos.length }})</span>
-        </div>
-        <div class="todo-items">
-          <div
-            v-for="todo in conversation.todos"
-            :key="todo.id"
-            class="todo-item"
-            :class="todo.status"
-            @click="toggleTodo(todo)"
-          >
-            <el-icon>
-              <CircleCheck v-if="todo.status === 'completed'" />
-              <Timer v-else-if="todo.status === 'in_progress'" />
-              <Warning v-else />
-            </el-icon>
-            <div class="todo-content">
-              <div class="todo-title">{{ todo.title }}</div>
-              <div class="todo-desc">{{ todo.description }}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <!-- 输入框 -->
       <div class="chat-input">
         <el-input
           v-model="inputMessage"
           type="textarea"
           :rows="3"
-          :placeholder="jobId ? '输入你的需求，让 AI 帮助你开发应用...' : '请先从作业列表中选择一个作业'"
-          @keydown.enter.prevent="jobId && sendMessage()"
+          placeholder="输入你的需求，让 AI 帮助你开发应用..."
+          @keydown.enter.prevent="conversationId && sendMessage()"
         />
-        <el-button type="primary" @click="sendMessage" :loading="isSending" :disabled="!conversation && !jobId">
+        <el-button type="primary" @click="sendMessage" :loading="isSending" :disabled="!conversationId">
           <el-icon><Promotion /></el-icon>
           发送
         </el-button>
@@ -210,14 +181,12 @@
               <div v-if="canAccessFiles" class="files-split">
                 <div class="files-tree">
                   <FileBrowser
-                    :job-id="jobId || undefined"
                     :conversation-id="canAccessConversationFiles ? conversationId || undefined : undefined"
                     @file-selected="handleFileSelected"
                   />
                 </div>
                 <div class="files-editor">
                   <CodeEditor
-                    :job-id="jobId || undefined"
                     :conversation-id="canAccessConversationFiles ? conversationId || undefined : undefined"
                     :selected-file="selectedFile"
                   />
@@ -226,7 +195,7 @@
               <div v-else class="placeholder">
                 <el-icon size="64"><FolderOpened /></el-icon>
                 <p v-if="conversationId">代码生成后可查看文件</p>
-                <p v-else>请先选择作业或创建对话</p>
+                <p v-else>请先创建对话</p>
                 <p v-if="conversationId && conversation?.stage" class="hint">
                   当前阶段：{{ getStageLabel(conversation.stage) }}
                 </p>
@@ -267,7 +236,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick, computed } from 'vue'
+import { ref, onMounted, nextTick, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -278,7 +247,6 @@ import {
   CircleCheck,
   CircleClose,
   Timer,
-  Warning,
   Promotion,
   Monitor,
   FolderOpened,
@@ -289,7 +257,7 @@ import {
   Document
 } from '@element-plus/icons-vue'
 import { marked } from 'marked'
-import { getConversation, conversationApi, previewApi, type FileNode } from '../api/job'
+import { conversationApi, previewApi, type FileNode } from '../api/job'
 import FileBrowser from './FileBrowser.vue'
 import CodeEditor from './CodeEditor.vue'
 import PreviewPanel from './PreviewPanel.vue'
@@ -311,20 +279,12 @@ interface ToolCall {
   status: string
 }
 
-interface Todo {
-  id: number
-  title: string
-  description: string
-  status: string
-}
-
 interface Conversation {
   id: number
   projectName: string
   stage?: string
   generatedCodePath?: string
   messages: Message[]
-  todos: Todo[]
 }
 
 const route = useRoute()
@@ -337,8 +297,6 @@ const isStartingPreview = ref(false)
 const activeTab = ref('preview')
 const chatHistoryRef = ref<HTMLElement | null>(null)
 const selectedFile = ref<FileNode | null>(null)
-const jobId = ref<number | null>(null)
-const isNewConversationMode = ref(false)
 const conversationId = ref<number | null>(null)
 const showConversationList = ref(false)
 const conversationList = ref<Conversation[]>([])
@@ -356,7 +314,7 @@ const canAccessConversationFiles = computed(() => {
   const stage = conversation.value.stage
   return !!stage && conversationFileStages.has(stage)
 })
-const canAccessFiles = computed(() => jobId.value !== null || canAccessConversationFiles.value)
+const canAccessFiles = computed(() => canAccessConversationFiles.value)
 
 // 对话阶段配置
 const stages = [
@@ -369,23 +327,14 @@ const stages = [
   { key: 'PREVIEWING', label: '预览' }
 ]
 
-// WebSocket 相关状态
-const websocket = ref<WebSocket | null>(null)
-const useWebSocket = ref(true) // 是否使用 WebSocket 流式响应
 
 onMounted(async () => {
-  const jobIdParam = route.query.jobId
   const conversationIdParam = route.query.conversationId
 
   if (conversationIdParam) {
     // 独立对话模式
-    isNewConversationMode.value = true
     conversationId.value = parseInt(conversationIdParam as string)
     await loadNewConversation(conversationId.value)
-  } else if (jobIdParam) {
-    // 基于 Job 的对话模式
-    jobId.value = parseInt(jobIdParam as string)
-    await loadConversation(jobId.value)
   }
   // 否则进入空状态，等待用户创建新对话
 
@@ -393,58 +342,6 @@ onMounted(async () => {
   await loadConversationList()
 })
 
-const startPolling = () => {
-  // 清除之前的定时器
-  if (pollingTimer.value) {
-    clearInterval(pollingTimer.value)
-  }
-  
-  // 每 3 秒刷新一次对话
-  pollingTimer.value = window.setInterval(async () => {
-    if (conversationId.value) {
-      try {
-        const data = await getConversation(conversationId.value)
-        // 只在消息数量变化时更新
-        if (data.messages.length !== conversation.value?.messages.length) {
-          conversation.value = data
-          await nextTick()
-          scrollToBottom()
-        }
-      } catch (error) {
-        console.error('Failed to poll conversation:', error)
-      }
-    }
-  }, 3000)
-}
-
-const stopPolling = () => {
-  if (pollingTimer.value) {
-    clearInterval(pollingTimer.value)
-    pollingTimer.value = null
-  }
-}
-
-onUnmounted(() => {
-  // 关闭 WebSocket 连接
-  if (websocket.value) {
-    websocket.value.close()
-    websocket.value = null
-  }
-  
-  // 停止定时刷新
-  stopPolling()
-})
-
-const loadConversation = async (jobId: number) => {
-  try {
-    const data = await getConversation(jobId)
-    conversation.value = data
-    await nextTick()
-    scrollToBottom()
-  } catch (error) {
-    console.error('Failed to load conversation:', error)
-  }
-}
 
 const loadNewConversation = async (id: number) => {
   try {
@@ -469,8 +366,6 @@ const createNewConversation = async () => {
       query: { conversationId: newConversation.id }
     })
 
-    // 加载新对话
-    isNewConversationMode.value = true
     conversationId.value = newConversation.id
     await loadNewConversation(newConversation.id)
 
@@ -571,219 +466,25 @@ const isStageCompleted = (stageKey: string) => {
 }
 
 const sendMessage = async () => {
-  console.log('sendMessage called')
-  console.log('inputMessage.value:', inputMessage.value)
-  console.log('conversation.value:', conversation.value)
-  console.log('isSending.value:', isSending.value)
-
   if (!inputMessage.value.trim()) {
-    console.log('Message is empty, not sending')
     return
   }
 
   if (isSending.value) {
-    console.log('Already sending, not sending')
     return
   }
 
-  // 如果是独立对话模式
-  if (isNewConversationMode.value && conversationId.value) {
-    isSending.value = true
-    try {
-      await sendMessageToNewConversation(inputMessage.value)
-    } finally {
-      isSending.value = false
-      inputMessage.value = ''
-    }
+  if (!conversationId.value) {
+    ElMessage.warning('请先创建对话')
     return
-  }
-
-  // 如果 conversation 不存在，尝试加载（基于 Job 的模式）
-  if (!conversation.value) {
-    console.log('Conversation is null, attempting to load...')
-    if (jobId.value) {
-      try {
-        await loadConversation(jobId.value)
-        if (!conversation.value) {
-          console.error('Failed to load conversation after retry')
-          ElMessage.error('加载对话失败，请稍后重试')
-          return
-        }
-      } catch (error) {
-        console.error('Failed to load conversation:', error)
-        ElMessage.error('加载对话失败，请稍后重试')
-        return
-      }
-    } else {
-      console.error('No jobId available, cannot send message')
-      ElMessage.warning('请先创建或选择一个作业')
-      return
-    }
   }
 
   isSending.value = true
-
-  // 添加用户消息到对话列表
-  const userMessage: Message = {
-    id: Date.now(),
-    role: 'user',
-    content: inputMessage.value,
-    timestamp: new Date().toISOString(),
-    senderName: '用户'
-  }
-
-  conversation.value.messages.push(userMessage)
-  scrollToBottom()
-
   try {
-    if (useWebSocket.value) {
-      // 使用 WebSocket 流式响应
-      await sendMessageWithWebSocket(inputMessage.value)
-    } else {
-      // 使用普通的 REST API
-      await sendMessageWithRest(userMessage)
-    }
-  } catch (error) {
-    console.error('Failed to send message:', error)
-    // 添加错误消息
-    const errorMessage: Message = {
-      id: Date.now() + 1,
-      role: 'assistant',
-      content: '发送消息失败，请稍后重试。',
-      timestamp: new Date().toISOString(),
-      senderName: 'AI 开发者'
-    }
-    conversation.value.messages.push(errorMessage)
-    scrollToBottom()
+    await sendMessageToNewConversation(inputMessage.value)
   } finally {
     isSending.value = false
     inputMessage.value = ''
-  }
-}
-
-// 使用 WebSocket 发送消息（流式响应）
-const sendMessageWithWebSocket = async (messageContent: string) => {
-  const aiMessage: Message = {
-    id: Date.now() + 1,
-    role: 'assistant',
-    content: '',
-    timestamp: new Date().toISOString(),
-    senderName: 'AI 开发者'
-  }
-
-  // 添加空的 AI 消息（用于流式显示）
-  conversation.value.messages.push(aiMessage)
-  scrollToBottom()
-
-  // 创建 WebSocket 连接
-  const ws = new WebSocket(`ws://localhost:8080/api/ws/conversation`)
-  websocket.value = ws
-
-  ws.onopen = () => {
-    console.log('WebSocket connected')
-    // 发送消息
-    ws.send(messageContent)
-  }
-
-  ws.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data)
-      
-      if (data.type === 'text') {
-        // 流式文本消息
-        aiMessage.content += data.content
-        scrollToBottom()
-      } else if (data.type === 'finish') {
-        // 完成消息
-        console.log('Stream finished')
-        ws.close()
-      } else if (data.type === 'error') {
-        // 错误消息
-        aiMessage.content += `\n[错误: ${data.error}]`
-        scrollToBottom()
-      }
-    } catch (error) {
-      console.error('Failed to parse WebSocket message:', error)
-    }
-  }
-
-  ws.onerror = (error) => {
-    console.error('WebSocket error:', error)
-    aiMessage.content = '连接错误，请稍后重试。'
-    scrollToBottom()
-  }
-
-  ws.onclose = () => {
-    console.log('WebSocket closed')
-    isSending.value = false
-  }
-
-  // 等待消息发送完成（最多 30 秒）
-  await new Promise(resolve => {
-    const timeout = setTimeout(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.close()
-      }
-      resolve(null)
-    }, 30000)
-    
-    ws.addEventListener('close', () => {
-      clearTimeout(timeout)
-      resolve(null)
-    })
-  })
-}
-
-// 使用 REST API 发送消息（非流式）
-const sendMessageWithRest = async (userMessage: Message) => {
-  const response = await fetch(`/api/conversations/${conversation.value.id}/messages`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(userMessage)
-  })
-
-  if (!response.ok) {
-    throw new Error('Failed to send message')
-  }
-
-  const aiMessage = await response.json()
-
-  // 添加 AI 回复到对话列表
-  conversation.value.messages.push(aiMessage)
-  scrollToBottom()
-}
-
-const toggleTodo = async (todo: Todo) => {
-  if (!conversation.value) return
-
-  // 循环切换状态：pending -> in_progress -> completed -> pending
-  const statusMap: Record<string, string> = {
-    'pending': 'in_progress',
-    'in_progress': 'completed',
-    'completed': 'pending'
-  }
-
-  const newStatus = statusMap[todo.status] || 'pending'
-
-  try {
-    // 调用后端 API 更新待办事项状态
-    const response = await conversationApi.updateTodoStatus(
-      conversation.value.id,
-      todo.id,
-      newStatus
-    )
-
-    // 更新本地待办事项状态
-    if (response.data) {
-      const updatedTodo = conversation.value.todos.find(t => t.id === todo.id)
-      if (updatedTodo) {
-        updatedTodo.status = newStatus
-      }
-    }
-  } catch (error) {
-    console.error('Failed to update todo status:', error)
   }
 }
 
@@ -840,7 +541,6 @@ const selectConversation = async (conv: Conversation) => {
   })
 
   // 加载对话
-  isNewConversationMode.value = true
   conversationId.value = conv.id
   await loadNewConversation(conv.id)
 }
