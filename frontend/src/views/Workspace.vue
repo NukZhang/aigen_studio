@@ -207,23 +207,29 @@
           </el-tab-pane>
           <el-tab-pane label="文件" name="files">
             <div class="tab-content files-content">
-              <div class="files-split">
+              <div v-if="canAccessFiles" class="files-split">
                 <div class="files-tree">
                   <FileBrowser
-                    v-if="jobId || conversationId"
                     :job-id="jobId || undefined"
-                    :conversation-id="conversationId || undefined"
+                    :conversation-id="canAccessConversationFiles ? conversationId || undefined : undefined"
                     @file-selected="handleFileSelected"
                   />
                 </div>
                 <div class="files-editor">
                   <CodeEditor
-                    v-if="jobId || conversationId"
                     :job-id="jobId || undefined"
-                    :conversation-id="conversationId || undefined"
+                    :conversation-id="canAccessConversationFiles ? conversationId || undefined : undefined"
                     :selected-file="selectedFile"
                   />
                 </div>
+              </div>
+              <div v-else class="placeholder">
+                <el-icon size="64"><FolderOpened /></el-icon>
+                <p v-if="conversationId">代码生成后可查看文件</p>
+                <p v-else>请先选择作业或创建对话</p>
+                <p v-if="conversationId && conversation?.stage" class="hint">
+                  当前阶段：{{ getStageLabel(conversation.stage) }}
+                </p>
               </div>
             </div>
           </el-tab-pane>
@@ -315,6 +321,8 @@ interface Todo {
 interface Conversation {
   id: number
   projectName: string
+  stage?: string
+  generatedCodePath?: string
   messages: Message[]
   todos: Todo[]
 }
@@ -334,6 +342,21 @@ const isNewConversationMode = ref(false)
 const conversationId = ref<number | null>(null)
 const showConversationList = ref(false)
 const conversationList = ref<Conversation[]>([])
+const conversationFileStages = new Set([
+  'CODE_GENERATING',
+  'READY_TO_START',
+  'SERVICE_STARTING',
+  'PREVIEWING',
+  'COMPLETED',
+  'FAILED'
+])
+const canAccessConversationFiles = computed(() => {
+  if (!conversationId.value || !conversation.value) return false
+  if (!conversation.value.generatedCodePath) return false
+  const stage = conversation.value.stage
+  return !!stage && conversationFileStages.has(stage)
+})
+const canAccessFiles = computed(() => jobId.value !== null || canAccessConversationFiles.value)
 
 // 对话阶段配置
 const stages = [
