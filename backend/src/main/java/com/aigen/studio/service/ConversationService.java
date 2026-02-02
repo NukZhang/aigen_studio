@@ -382,12 +382,12 @@ public class ConversationService {
             });
 
             // 更新对话状态
-            conversation.setStage(ConversationStage.SERVICE_STARTING);
+            conversation.setStage(ConversationStage.READY_TO_START);
             conversation.setServiceStatus("CODE_GENERATED");
             conversationRepository.save(conversation);
 
             // 发送代码生成完成的进度消息
-            sendProgressMessage(conversationId, "代码生成完成！正在启动服务...", "system");
+            sendProgressMessage(conversationId, "代码生成完成，请确认启动服务", "system");
 
             log.info("Code generation completed for conversation: {}", conversationId);
 
@@ -538,6 +538,10 @@ public class ConversationService {
             case CODE_GENERATING:
                 // 代码生成阶段，用户可以询问进度
                 handleCodeGenerating(conversation, message, response);
+                break;
+
+            case READY_TO_START:
+                response.setContent("代码生成完成，请点击“确认启动”以启动服务预览。");
                 break;
 
             case SERVICE_STARTING:

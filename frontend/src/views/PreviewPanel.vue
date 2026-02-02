@@ -21,9 +21,19 @@
           type="danger"
           size="small"
           @click="stopPreview"
+          :loading="isStopping"
         >
           <el-icon><VideoPause /></el-icon>
           停止预览
+        </el-button>
+        <el-button
+          v-if="isPreviewRunning"
+          size="small"
+          @click="restartPreview"
+          :loading="isRestarting"
+        >
+          <el-icon><Refresh /></el-icon>
+          重启
         </el-button>
         <el-button
           v-if="previewUrl"
@@ -37,11 +47,17 @@
     </div>
 
     <div class="preview-content">
-      <div v-if="!isPreviewRunning && !isStarting" class="placeholder">
+      <div v-if="!conversationId" class="placeholder">
+        <el-icon size="64"><Monitor /></el-icon>
+        <p>预览仅支持对话模式</p>
+        <p class="hint">请先创建对话并完成代码生成</p>
+      </div>
+
+      <div v-else-if="!isPreviewRunning && !isStarting" class="placeholder">
         <el-icon size="64"><Monitor /></el-icon>
         <p>预览功能尚未启动</p>
         <p class="hint">点击上方"启动预览"按钮，预览生成的应用</p>
-        <p class="note">注意：预览功能需要在本地环境中运行 npm run dev</p>
+        <p class="note">注意：预览功能会在后台启动前后端服务</p>
       </div>
 
       <div v-else-if="isStarting" class="loading">
@@ -62,45 +78,86 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-import { VideoPlay, VideoPause, TopRight, Loading, Monitor } from '@element-plus/icons-vue'
+import { ref, computed, watch } from 'vue'
+import { ElMessage } from 'element-plus'
+import { VideoPlay, VideoPause, TopRight, Loading, Monitor, Refresh } from '@element-plus/icons-vue'
+import { previewApi, type PreviewStatus } from '../api/job'
 
 interface Props {
-  jobId: number
+  conversationId?: number
 }
 
 const props = defineProps<Props>()
 
-const isPreviewRunning = ref(false)
+const status = ref<PreviewStatus | null>(null)
 const isStarting = ref(false)
-const previewUrl = ref<string>('')
+const isStopping = ref(false)
+const isRestarting = ref(false)
 
-// 默认预览端口为 3001（主项目在 3000）
-const getPreviewPort = () => 3000 + props.jobId
+const isPreviewRunning = computed(() => status.value?.running ?? false)
+const previewUrl = computed(() => status.value?.frontendUrl || status.value?.backendUrl || '')
+const conversationId = computed(() => props.conversationId)
+
+const fetchStatus = async () => {
+  if (!conversationId.value) {
+    status.value = null
+    return
+  }
+  try {
+    const response = await previewApi.getStatus(conversationId.value)
+    status.value = response.data
+  } catch (error) {
+    console.error('Failed to fetch preview status:', error)
+  }
+}
+
+watch(conversationId, () => {
+  fetchStatus()
+}, { immediate: true })
 
 const startPreview = async () => {
+  if (!conversationId.value) return
   isStarting.value = true
-
   try {
-    // 在 PoC 阶段，我们假设预览服务已经在运行
-    // 实际实现需要调用后端 API 启动预览服务
-    const port = getPreviewPort()
-    previewUrl.value = `http://localhost:${port}`
-    
-    // 模拟启动延迟
-    await new Promise(resolve => setTimeout(resolve, 2000))
-    
-    isPreviewRunning.value = true
+    const response = await previewApi.startPreview(conversationId.value)
+    status.value = response.data
+    ElMessage.success('预览已启动')
   } catch (error) {
     console.error('Failed to start preview:', error)
+    ElMessage.error('启动预览失败')
   } finally {
     isStarting.value = false
   }
 }
 
-const stopPreview = () => {
-  isPreviewRunning.value = false
-  previewUrl.value = ''
+const stopPreview = async () => {
+  if (!conversationId.value) return
+  isStopping.value = true
+  try {
+    const response = await previewApi.stopPreview(conversationId.value)
+    status.value = response.data
+    ElMessage.success('预览已停止')
+  } catch (error) {
+    console.error('Failed to stop preview:', error)
+    ElMessage.error('停止预览失败')
+  } finally {
+    isStopping.value = false
+  }
+}
+
+const restartPreview = async () => {
+  if (!conversationId.value) return
+  isRestarting.value = true
+  try {
+    const response = await previewApi.restartPreview(conversationId.value)
+    status.value = response.data
+    ElMessage.success('预览已重启')
+  } catch (error) {
+    console.error('Failed to restart preview:', error)
+    ElMessage.error('重启预览失败')
+  } finally {
+    isRestarting.value = false
+  }
 }
 
 const openInNewTab = () => {

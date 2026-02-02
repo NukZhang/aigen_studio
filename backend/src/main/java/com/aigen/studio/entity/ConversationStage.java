@@ -25,6 +25,11 @@ public enum ConversationStage {
     CODE_GENERATING,
 
     /**
+     * 代码生成完成，等待确认启动
+     */
+    READY_TO_START,
+
+    /**
      * 服务启动阶段
      */
     SERVICE_STARTING,

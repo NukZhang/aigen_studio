@@ -1,12 +1,15 @@
 package com.aigen.studio.service;
 
 import com.aigen.studio.dto.FileNodeDTO;
+import com.aigen.studio.entity.Conversation;
 import com.aigen.studio.entity.GenerationJob;
+import com.aigen.studio.repository.ConversationRepository;
 import com.aigen.studio.repository.GenerationJobRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -27,6 +30,8 @@ import java.util.stream.Collectors;
 public class FileService {
 
     private final GenerationJobRepository generationJobRepository;
+    private final FileWorkspaceService fileWorkspaceService;
+    private final ConversationRepository conversationRepository;
 
     @Value("${iflow.sdk.output-dir:../../generated-code}")
     private String outputDir;
@@ -78,6 +83,81 @@ public class FileService {
             log.error("Failed to read file: {}", targetPath, e);
             throw new RuntimeException("Failed to read file", e);
         }
+    }
+
+    /**
+     * 获取 Conversation 的文件树
+     */
+    public List<FileNodeDTO> getConversationFileTree(Long conversationId) {
+        Path rootPath = resolveConversationRoot(conversationId);
+
+        if (!Files.exists(rootPath)) {
+            log.warn("Conversation directory does not exist: {}", rootPath);
+            return new ArrayList<>();
+        }
+
+        try {
+            return buildFileTree(rootPath, rootPath.toString());
+        } catch (IOException e) {
+            log.error("Failed to build file tree for conversation {}", conversationId, e);
+            throw new RuntimeException("Failed to build file tree", e);
+        }
+    }
+
+    /**
+     * 获取 Conversation 文件内容
+     */
+    public String getConversationFileContent(Long conversationId, String filePath) {
+        Path rootPath = resolveConversationRoot(conversationId);
+        return fileWorkspaceService.readText(rootPath, filePath);
+    }
+
+    /**
+     * 保存 Conversation 文件内容
+     */
+    public void saveConversationFileContent(Long conversationId, String filePath, String content) {
+        Path rootPath = resolveConversationRoot(conversationId);
+        fileWorkspaceService.writeText(rootPath, filePath, content);
+    }
+
+    /**
+     * 创建 Conversation 文件
+     */
+    public void createConversationFile(Long conversationId, String filePath) {
+        Path rootPath = resolveConversationRoot(conversationId);
+        fileWorkspaceService.createFile(rootPath, filePath);
+    }
+
+    /**
+     * 创建 Conversation 目录
+     */
+    public void createConversationDirectory(Long conversationId, String path) {
+        Path rootPath = resolveConversationRoot(conversationId);
+        fileWorkspaceService.createDirectory(rootPath, path);
+    }
+
+    /**
+     * 重命名 Conversation 文件/目录
+     */
+    public void renameConversationPath(Long conversationId, String from, String to) {
+        Path rootPath = resolveConversationRoot(conversationId);
+        fileWorkspaceService.renamePath(rootPath, from, to);
+    }
+
+    /**
+     * 删除 Conversation 文件/目录
+     */
+    public void deleteConversationPath(Long conversationId, String path) {
+        Path rootPath = resolveConversationRoot(conversationId);
+        fileWorkspaceService.deletePath(rootPath, path);
+    }
+
+    /**
+     * 上传 Conversation 文件
+     */
+    public void uploadConversationFile(Long conversationId, String targetDir, MultipartFile file) {
+        Path rootPath = resolveConversationRoot(conversationId);
+        fileWorkspaceService.saveUpload(rootPath, targetDir, file);
     }
 
     /**
@@ -177,5 +257,15 @@ public class FileService {
     private String getFileExtension(String fileName) {
         int dotIndex = fileName.lastIndexOf('.');
         return (dotIndex == -1) ? "" : fileName.substring(dotIndex + 1);
+    }
+
+    private Path resolveConversationRoot(Long conversationId) {
+        Conversation conversation = conversationRepository.findById(conversationId)
+                .orElseThrow(() -> new RuntimeException("Conversation not found: " + conversationId));
+        String rootPath = conversation.getGeneratedCodePath();
+        if (rootPath == null || rootPath.isBlank()) {
+            throw new RuntimeException("Conversation generated code path is not ready");
+        }
+        return Paths.get(rootPath).toAbsolutePath().normalize();
     }
 }

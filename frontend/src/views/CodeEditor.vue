@@ -7,9 +7,19 @@
         <span v-if="selectedFile" class="file-type">{{ getFileTypeLabel(selectedFile.type) }}</span>
       </div>
       <div class="editor-actions">
-        <el-button size="small" @click="copyContent" :disabled="!content">
+        <el-button size="small" @click="copyContent" :disabled="!displayContent">
           <el-icon><CopyDocument /></el-icon>
           复制
+        </el-button>
+        <el-button
+          size="small"
+          type="primary"
+          @click="saveContent"
+          :loading="isSaving"
+          :disabled="!canSave"
+        >
+          <el-icon><Check /></el-icon>
+          保存
         </el-button>
       </div>
     </div>
@@ -30,6 +40,20 @@
         <p>{{ error }}</p>
       </div>
 
+      <div v-else-if="isBinaryFile" class="empty-state">
+        <el-icon size="48"><Warning /></el-icon>
+        <p>该文件类型不支持编辑</p>
+      </div>
+
+      <div v-else-if="isEditable" class="editor-textarea">
+        <el-input
+          v-model="editedContent"
+          type="textarea"
+          :rows="24"
+          class="code-input"
+        />
+      </div>
+
       <div v-else-if="!content" class="empty-state">
         <el-icon size="48"><Document /></el-icon>
         <p>文件内容为空</p>
@@ -41,19 +65,21 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   Document,
   Edit,
   Warning,
   CopyDocument,
-  Loading
+  Loading,
+  Check
 } from '@element-plus/icons-vue'
 import { fileApi, type FileNode } from '../api/job'
 
 interface Props {
-  jobId: number
+  jobId?: number
+  conversationId?: number
   selectedFile: FileNode | null
 }
 
@@ -61,13 +87,33 @@ const props = defineProps<Props>()
 
 const loading = ref(false)
 const content = ref('')
+const editedContent = ref('')
 const error = ref('')
+const isSaving = ref(false)
+
+const isBinaryFile = computed(() => {
+  const type = props.selectedFile?.type
+  return type === 'image' || type === 'pdf' || type === 'archive'
+})
+
+const isEditable = computed(() => {
+  return !!props.conversationId && !!props.selectedFile && !props.selectedFile.directory && !isBinaryFile.value
+})
+
+const canSave = computed(() => {
+  return isEditable.value && editedContent.value !== content.value && !isSaving.value
+})
+
+const displayContent = computed(() => {
+  return isEditable.value ? editedContent.value : content.value
+})
 
 watch(() => props.selectedFile, async (newFile) => {
-  if (newFile && !newFile.isDirectory) {
+  if (newFile && !newFile.directory) {
     await loadFileContent(newFile.path)
   } else {
     content.value = ''
+    editedContent.value = ''
     error.value = ''
   }
 })
@@ -76,11 +122,15 @@ const loadFileContent = async (filePath: string) => {
   loading.value = true
   error.value = ''
   content.value = ''
+  editedContent.value = ''
 
   try {
-    const response = await fileApi.getFileContent(props.jobId, filePath)
-    if (response.data.success && response.data.content) {
-      content.value = response.data.content
+    const response = props.conversationId
+      ? await fileApi.getConversationFileContent(props.conversationId, filePath)
+      : await fileApi.getFileContent(props.jobId as number, filePath)
+    if (response.data.success && response.data.content !== undefined) {
+      content.value = response.data.content || ''
+      editedContent.value = response.data.content || ''
     } else {
       error.value = response.data.error || '加载文件内容失败'
     }
@@ -93,14 +143,39 @@ const loadFileContent = async (filePath: string) => {
 }
 
 const copyContent = async () => {
-  if (!content.value) return
+  if (!displayContent.value) return
 
   try {
-    await navigator.clipboard.writeText(content.value)
+    await navigator.clipboard.writeText(displayContent.value)
     ElMessage.success('已复制到剪贴板')
   } catch (err) {
     console.error('Failed to copy:', err)
     ElMessage.error('复制失败')
+  }
+}
+
+const saveContent = async () => {
+  if (!props.conversationId || !props.selectedFile || !isEditable.value) return
+  if (!canSave.value) return
+
+  isSaving.value = true
+  try {
+    const response = await fileApi.saveConversationFileContent(
+      props.conversationId,
+      props.selectedFile.path,
+      editedContent.value
+    )
+    if (response.data.success) {
+      content.value = editedContent.value
+      ElMessage.success('保存成功')
+    } else {
+      ElMessage.error(response.data.error || '保存失败')
+    }
+  } catch (err) {
+    console.error('Failed to save file content:', err)
+    ElMessage.error('保存失败')
+  } finally {
+    isSaving.value = false
   }
 }
 
@@ -114,6 +189,7 @@ const getFileTypeLabel = (type: string) => {
     json: 'JSON',
     xml: 'XML/YAML',
     markdown: 'Markdown',
+    text: '文本',
     image: '图片',
     pdf: 'PDF',
     archive: '压缩包',
@@ -203,6 +279,20 @@ const getFileTypeLabel = (type: string) => {
   font-size: 13px;
   line-height: 1.6;
   color: #e0e0e0;
+}
+
+.editor-textarea {
+  height: 100%;
+}
+
+.editor-textarea :deep(.el-textarea__inner) {
+  height: 100%;
+  background-color: #1a1a1a;
+  border-color: #3a3a3a;
+  color: #e0e0e0;
+  font-family: 'Fira Code', 'Monaco', 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .code-display::-webkit-scrollbar {

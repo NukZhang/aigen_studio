@@ -131,6 +131,23 @@
         </div>
       </div>
 
+      <!-- 代码生成完成确认启动 -->
+      <div class="start-confirm-panel" v-if="conversation?.stage === 'READY_TO_START'">
+        <div class="confirm-header">
+          <el-icon><Monitor /></el-icon>
+          <span>代码生成完成</span>
+        </div>
+        <div class="confirm-content">
+          <p>代码已生成，点击下方按钮启动预览服务。</p>
+        </div>
+        <div class="confirm-actions">
+          <el-button type="primary" @click="startPreviewFromConfirm" :loading="isStartingPreview">
+            <el-icon><VideoPlay /></el-icon>
+            确认启动
+          </el-button>
+        </div>
+      </div>
+
       <!-- 待办事项 -->
       <div class="todo-panel" v-if="conversation && conversation.todos && conversation.todos.length > 0">
         <div class="todo-header">
@@ -180,25 +197,40 @@
         <el-tabs v-model="activeTab" type="border-card">
           <el-tab-pane label="预览" name="preview">
             <div class="tab-content preview-content">
-              <PreviewPanel v-if="jobId" :job-id="jobId" />
+              <PreviewPanel v-if="conversationId" :conversation-id="conversationId" />
+              <div v-else class="placeholder">
+                <el-icon size="64"><Monitor /></el-icon>
+                <p>预览仅支持对话模式</p>
+                <p class="hint">请先创建对话并完成代码生成</p>
+              </div>
             </div>
           </el-tab-pane>
-          <el-tab-pane label="文件浏览器" name="files">
+          <el-tab-pane label="文件" name="files">
             <div class="tab-content files-content">
-              <FileBrowser
-                v-if="jobId"
-                :job-id="jobId"
-                @file-selected="handleFileSelected"
-              />
-            </div>
-          </el-tab-pane>
-          <el-tab-pane label="代码编辑" name="code">
-            <div class="tab-content code-content">
-              <CodeEditor
-                v-if="jobId"
-                :job-id="jobId"
-                :selected-file="selectedFile"
-              />
+              <div v-if="canAccessFiles" class="files-split">
+                <div class="files-tree">
+                  <FileBrowser
+                    :job-id="jobId || undefined"
+                    :conversation-id="canAccessConversationFiles ? conversationId || undefined : undefined"
+                    @file-selected="handleFileSelected"
+                  />
+                </div>
+                <div class="files-editor">
+                  <CodeEditor
+                    :job-id="jobId || undefined"
+                    :conversation-id="canAccessConversationFiles ? conversationId || undefined : undefined"
+                    :selected-file="selectedFile"
+                  />
+                </div>
+              </div>
+              <div v-else class="placeholder">
+                <el-icon size="64"><FolderOpened /></el-icon>
+                <p v-if="conversationId">代码生成后可查看文件</p>
+                <p v-else>请先选择作业或创建对话</p>
+                <p v-if="conversationId && conversation?.stage" class="hint">
+                  当前阶段：{{ getStageLabel(conversation.stage) }}
+                </p>
+              </div>
             </div>
           </el-tab-pane>
           <el-tab-pane label="发布" name="publish">
@@ -257,7 +289,7 @@ import {
   Document
 } from '@element-plus/icons-vue'
 import { marked } from 'marked'
-import { getConversation, conversationApi, type FileNode } from '../api/job'
+import { getConversation, conversationApi, previewApi, type FileNode } from '../api/job'
 import FileBrowser from './FileBrowser.vue'
 import CodeEditor from './CodeEditor.vue'
 import PreviewPanel from './PreviewPanel.vue'
@@ -289,6 +321,8 @@ interface Todo {
 interface Conversation {
   id: number
   projectName: string
+  stage?: string
+  generatedCodePath?: string
   messages: Message[]
   todos: Todo[]
 }
@@ -299,6 +333,7 @@ const conversation = ref<Conversation | null>(null)
 const inputMessage = ref('')
 const isSending = ref(false)
 const isConfirming = ref(false)
+const isStartingPreview = ref(false)
 const activeTab = ref('preview')
 const chatHistoryRef = ref<HTMLElement | null>(null)
 const selectedFile = ref<FileNode | null>(null)
@@ -307,6 +342,21 @@ const isNewConversationMode = ref(false)
 const conversationId = ref<number | null>(null)
 const showConversationList = ref(false)
 const conversationList = ref<Conversation[]>([])
+const conversationFileStages = new Set([
+  'CODE_GENERATING',
+  'READY_TO_START',
+  'SERVICE_STARTING',
+  'PREVIEWING',
+  'COMPLETED',
+  'FAILED'
+])
+const canAccessConversationFiles = computed(() => {
+  if (!conversationId.value || !conversation.value) return false
+  if (!conversation.value.generatedCodePath) return false
+  const stage = conversation.value.stage
+  return !!stage && conversationFileStages.has(stage)
+})
+const canAccessFiles = computed(() => jobId.value !== null || canAccessConversationFiles.value)
 
 // 对话阶段配置
 const stages = [
@@ -314,6 +364,7 @@ const stages = [
   { key: 'UNDERSTANDING', label: '理解需求' },
   { key: 'UNDERSTANDING_CONFIRMED', label: '确认理解' },
   { key: 'CODE_GENERATING', label: '生成代码' },
+  { key: 'READY_TO_START', label: '确认启动' },
   { key: 'SERVICE_STARTING', label: '启动服务' },
   { key: 'PREVIEWING', label: '预览' }
 ]
@@ -491,6 +542,22 @@ const confirmUnderstanding = async (confirmed: boolean) => {
     ElMessage.error('确认失败，请稍后重试')
   } finally {
     isConfirming.value = false
+  }
+}
+
+const startPreviewFromConfirm = async () => {
+  if (!conversationId.value) return
+  isStartingPreview.value = true
+  try {
+    await previewApi.startPreview(conversationId.value)
+    await loadNewConversation(conversationId.value)
+    activeTab.value = 'preview'
+    ElMessage.success('预览已启动')
+  } catch (error) {
+    console.error('Failed to start preview:', error)
+    ElMessage.error('启动预览失败')
+  } finally {
+    isStartingPreview.value = false
   }
 }
 
@@ -722,9 +789,8 @@ const toggleTodo = async (todo: Todo) => {
 
 const handleFileSelected = (node: FileNode) => {
   selectedFile.value = node
-  // 自动切换到代码编辑标签页
   if (!node.directory) {
-    activeTab.value = 'code'
+    activeTab.value = 'files'
   }
 }
 
@@ -795,7 +861,9 @@ const getStageLabel = (stage: string) => {
 
 /* 左侧对话区 */
 .chat-panel {
-  width: 40%;
+  flex: 0 0 40%;
+  min-width: 420px;
+  max-width: 40%;
   display: flex;
   flex-direction: column;
   border-right: 1px solid #3a3a3a;
@@ -1109,7 +1177,8 @@ const getStageLabel = (stage: string) => {
 }
 
 /* 理解确认界面 */
-.understanding-confirm-panel {
+.understanding-confirm-panel,
+.start-confirm-panel {
   padding: 16px 20px;
   border-top: 1px solid #3a3a3a;
   background-color: #1f1f1f;
@@ -1173,7 +1242,8 @@ const getStageLabel = (stage: string) => {
 
 /* 右侧工作区 */
 .developer-panel {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   flex-direction: column;
 }
@@ -1212,6 +1282,30 @@ const getStageLabel = (stage: string) => {
 .preview-content {
   align-items: stretch;
   justify-content: flex-start;
+}
+
+.files-split {
+  display: flex;
+  gap: 12px;
+  height: 100%;
+  width: 100%;
+  padding: 12px;
+  box-sizing: border-box;
+}
+
+.files-tree {
+  flex: 0 0 32%;
+  min-width: 260px;
+  border-right: 1px solid #2f2f2f;
+  padding-right: 12px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.files-editor {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .placeholder {

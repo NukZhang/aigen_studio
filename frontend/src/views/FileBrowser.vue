@@ -32,7 +32,7 @@
       </div>
     </div>
 
-    <div v-if="selectedNode && !selectedNode.directory" class="file-actions">
+    <div v-if="selectedNode && !selectedNode.directory && props.jobId" class="file-actions">
       <el-button size="small" @click="downloadFile">
         <el-icon><Download /></el-icon>
         下载
@@ -42,7 +42,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   FolderOpened,
@@ -54,7 +54,8 @@ import { fileApi, type FileNode } from '../api/job'
 import FileTreeNode from '../components/FileTreeNode.vue'
 
 interface Props {
-  jobId: number
+  jobId?: number
+  conversationId?: number
 }
 
 const props = defineProps<Props>()
@@ -72,10 +73,16 @@ onMounted(() => {
   loadFileTree()
 })
 
+watch(() => [props.jobId, props.conversationId], () => {
+  loadFileTree()
+})
+
 const loadFileTree = async () => {
   loading.value = true
   try {
-    const response = await fileApi.getFileTree(props.jobId)
+    const response = props.conversationId
+      ? await fileApi.getConversationFileTree(props.conversationId)
+      : await fileApi.getFileTree(props.jobId as number)
     fileTree.value = response.data
     // 默认展开第一层目录
     if (fileTree.value.length > 0 && fileTree.value[0].directory) {
@@ -107,9 +114,9 @@ const selectNode = (node: FileNode) => {
 }
 
 const downloadFile = () => {
-  if (!selectedNode.value) return
-  
-  // 使用后端 API 下载文件
+  if (!selectedNode.value || !props.jobId) return
+
+  // 使用后端 API 下载文件（仅支持 Job 模式）
   window.location.href = `/api/files/job/${props.jobId}/download?filePath=${encodeURIComponent(selectedNode.value.path)}`
 }
 </script>

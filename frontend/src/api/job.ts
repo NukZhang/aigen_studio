@@ -81,6 +81,27 @@ export interface FileContent {
   error?: string
 }
 
+export interface FileOperationResult {
+  success: boolean
+  error?: string
+  filePath?: string
+  path?: string
+  from?: string
+  to?: string
+}
+
+export interface PreviewStatus {
+  conversationId: number
+  running: boolean
+  frontendRunning: boolean
+  backendRunning: boolean
+  frontendPort?: number
+  backendPort?: number
+  frontendUrl?: string
+  backendUrl?: string
+  message?: string
+}
+
 export const jobApi = {
   getAll: (status?: string) => {
     const params = status ? { status } : {}
@@ -186,5 +207,67 @@ export const fileApi = {
     return api.get<FileContent>(`/files/job/${jobId}/content`, {
       params: { filePath }
     })
+  },
+
+  getConversationFileTree: (conversationId: number) => {
+    return api.get<FileNode[]>(`/files/conversation/${conversationId}/tree`)
+  },
+
+  getConversationFileContent: (conversationId: number, filePath: string) => {
+    return api.get<FileContent>(`/files/conversation/${conversationId}/content`, {
+      params: { filePath }
+    })
+  },
+
+  saveConversationFileContent: (conversationId: number, filePath: string, content: string) => {
+    return api.put<FileContent>(`/files/conversation/${conversationId}/content`, {
+      filePath,
+      content
+    })
+  },
+
+  createConversationFile: (conversationId: number, filePath: string) => {
+    return api.post<FileOperationResult>(`/files/conversation/${conversationId}/create`, { filePath })
+  },
+
+  createConversationDirectory: (conversationId: number, path: string) => {
+    return api.post<FileOperationResult>(`/files/conversation/${conversationId}/mkdir`, { path })
+  },
+
+  renameConversationPath: (conversationId: number, from: string, to: string) => {
+    return api.post<FileOperationResult>(`/files/conversation/${conversationId}/rename`, { from, to })
+  },
+
+  deleteConversationPath: (conversationId: number, path: string) => {
+    return api.post<FileOperationResult>(`/files/conversation/${conversationId}/delete`, { path })
+  },
+
+  uploadConversationFile: (conversationId: number, file: File, targetDir?: string) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    if (targetDir) {
+      formData.append('targetDir', targetDir)
+    }
+    return api.post<FileOperationResult>(`/files/conversation/${conversationId}/upload`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+  }
+}
+
+export const previewApi = {
+  startPreview: (conversationId: number) => {
+    return api.post<PreviewStatus>(`/preview/conversation/${conversationId}/start`)
+  },
+
+  stopPreview: (conversationId: number) => {
+    return api.post<PreviewStatus>(`/preview/conversation/${conversationId}/stop`)
+  },
+
+  restartPreview: (conversationId: number) => {
+    return api.post<PreviewStatus>(`/preview/conversation/${conversationId}/restart`)
+  },
+
+  getStatus: (conversationId: number) => {
+    return api.get<PreviewStatus>(`/preview/conversation/${conversationId}/status`)
   }
 }
