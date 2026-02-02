@@ -1,7 +1,9 @@
 package com.aigen.studio.controller;
 
+import com.aigen.studio.dto.ConversationDTO;
 import com.aigen.studio.dto.GenerationJobDTO;
 import com.aigen.studio.entity.GenerationJob;
+import com.aigen.studio.service.ConversationService;
 import com.aigen.studio.service.GenerationJobService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,6 +21,7 @@ import java.util.Map;
 public class GenerationJobController {
 
     private final GenerationJobService jobService;
+    private final ConversationService conversationService;
 
     @PostMapping
     public ResponseEntity<GenerationJobDTO> createJob(
@@ -66,5 +69,18 @@ public class GenerationJobController {
             return ResponseEntity.ok(jobService.getJobsByStatus(status));
         }
         return ResponseEntity.ok(jobService.getAllJobs());
+    }
+
+    @GetMapping("/{id}/delivery-logs")
+    public ResponseEntity<String> getDeliveryLogs(@PathVariable Long id) {
+        String logs = jobService.getDeliveryLogs(id);
+        return ResponseEntity.ok(logs);
+    }
+
+    @GetMapping("/{id}/conversation")
+    public ResponseEntity<ConversationDTO> getConversation(@PathVariable Long id) {
+        log.info("Getting conversation for job: {}", id);
+        ConversationDTO conversation = conversationService.getConversationByJobId(id);
+        return ResponseEntity.ok(conversation);
     }
 }

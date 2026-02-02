@@ -78,19 +78,24 @@ public class ArtifactService {
     }
 
     public List<ArtifactDTO> getArtifactsByJobId(Long jobId) {
+        GenerationJob job = jobRepository.findById(jobId).orElse(null);
         return artifactRepository.findByJobId(jobId).stream()
-            .map(ArtifactDTO::fromEntity)
+            .map(artifact -> ArtifactDTO.fromEntity(artifact, job))
             .collect(Collectors.toList());
     }
 
     public Optional<ArtifactDTO> getArtifactById(Long id) {
         return artifactRepository.findById(id)
-            .map(ArtifactDTO::fromEntity);
+            .map(artifact -> {
+                GenerationJob job = jobRepository.findById(artifact.getJobId()).orElse(null);
+                return ArtifactDTO.fromEntity(artifact, job);
+            });
     }
 
-    public List<ArtifactDTO> getArtifactsByType(Long jobId, Artifact.ArtifactType type) {
+    public List<ArtifactDTO> getArtifactsByType(Long jobId, String type) {
+        GenerationJob job = jobRepository.findById(jobId).orElse(null);
         return artifactRepository.findByJobIdAndType(jobId, type).stream()
-            .map(ArtifactDTO::fromEntity)
+            .map(artifact -> ArtifactDTO.fromEntity(artifact, job))
             .collect(Collectors.toList());
     }
 
@@ -102,7 +107,10 @@ public class ArtifactService {
 
     public List<ArtifactDTO> getAllArtifacts() {
         return artifactRepository.findAll().stream()
-            .map(ArtifactDTO::fromEntity)
+            .map(artifact -> {
+                GenerationJob job = jobRepository.findById(artifact.getJobId()).orElse(null);
+                return ArtifactDTO.fromEntity(artifact, job);
+            })
             .collect(Collectors.toList());
     }
 
@@ -137,7 +145,7 @@ public class ArtifactService {
             String gitlabBranch,
             String gitlabCommitId) {
         List<Artifact> artifacts = artifactRepository.findByJobIdAndType(
-            jobId, Artifact.ArtifactType.valueOf(type));
+            jobId, type);
 
         for (Artifact artifact : artifacts) {
             String gitlabFilePath = artifact.getPath();
@@ -159,100 +167,64 @@ public class ArtifactService {
         Artifact artifact = artifactRepository.findById(artifactId)
             .orElseThrow(() -> new RuntimeException("Artifact not found: " + artifactId));
 
-        // 检查文件是否存在
-        File file = new File(artifact.getPath());
-        if (!file.exists()) {
-            throw new RuntimeException("文件不存在: " + artifact.getPath());
-        }
-
         // 检查作业信息
         GenerationJob job = jobRepository.findById(artifact.getJobId())
             .orElseThrow(() -> new RuntimeException("Job not found: " + artifact.getJobId()));
 
         try {
-            // 步骤1: 检查或创建群组
-            String groupName = String.format("REQ-%d-JOB-%d", job.getRequirementId(), job.getId());
-            String groupDescription = String.format("Code generation for Requirement %d, Job %s", job.getRequirementId(), job.getJobCode());
-
-            Map<String, Object> group;
-            if (job.getGitlabGroupId() == null) {
-                group = gitLabService.createOrGetGroup(groupName, groupDescription);
-                job.setGitlabGroupId(((Number) group.get("id")).longValue());
-                jobRepository.save(job);
-                log.info("Created GitLab group: {}", groupName);
-            } else {
-                // 验证群组是否存在
-                group = gitLabService.findGroupById(job.getGitlabGroupId());
-                if (group == null) {
-                    throw new RuntimeException("GitLab group not found: " + job.getGitlabGroupId());
-                }
+            // 步骤1: 获取AIGen group
+            String groupName = "AIGen";
+            Map<String, Object> aigenGroup = gitLabService.findGroupByName(groupName);
+            if (aigenGroup == null) {
+                throw new RuntimeException("AIGen group not found. Please create the AIGen group in GitLab first.");
             }
-
-            // 步骤2: 确定项目类型和名称
-            String projectType = "";
-            if (artifact.getType().equals(Artifact.ArtifactType.FRONTEND_CODE.name())) {
-                projectType = "frontend";
-            } else if (artifact.getType().equals(Artifact.ArtifactType.BACKEND_CODE.name())) {
-                projectType = "backend";
-            } else {
-                throw new RuntimeException("不支持的产出物类型: " + artifact.getType());
+            Long groupId = ((Number) aigenGroup.get("id")).longValue();
+            
+            // 步骤2: 确定分支名
+            String branchName = "v.1.0.0";
+            
+            // 步骤3: 检查项目路径
+            String projectPath = artifact.getPath();
+            if (projectPath == null || projectPath.isEmpty()) {
+                throw new RuntimeException("Artifact path is empty");
             }
-
-            String projectName = groupName + "-" + projectType;
-            String projectDesc = projectType + " project for " + job.getJobCode();
-
-            // 步骤3: 检查或创建项目
-            Map<String, Object> project;
-            Long projectId = null;
-
-            if (projectType.equals("frontend") && job.getGitlabFrontendProjectId() != null) {
-                projectId = job.getGitlabFrontendProjectId();
-            } else if (projectType.equals("backend") && job.getGitlabBackendProjectId() != null) {
-                projectId = job.getGitlabBackendProjectId();
+            
+            File projectDir = new File(projectPath);
+            if (!projectDir.exists()) {
+                throw new RuntimeException("Project directory does not exist: " + projectPath);
             }
-
-            if (projectId != null) {
-                // 验证项目是否存在
-                project = gitLabService.findProjectById(projectId);
-                if (project == null) {
-                    throw new RuntimeException("GitLab project not found: " + projectId);
-                }
-            } else {
-                // 创建新项目
-                project = gitLabService.createOrGetProject(job.getGitlabGroupId(), projectName, projectDesc);
-                projectId = ((Number) project.get("id")).longValue();
-
-                if (projectType.equals("frontend")) {
-                    job.setGitlabFrontendProjectId(projectId);
-                } else if (projectType.equals("backend")) {
-                    job.setGitlabBackendProjectId(projectId);
-                }
-                jobRepository.save(job);
-                log.info("Created GitLab project: {}", projectName);
-            }
-
-            // 步骤4: 确定分支名
-            String branchName = job.getGitlabBranch();
-            if (branchName == null) {
-                branchName = "feature/" + job.getJobCode().toLowerCase();
-                job.setGitlabBranch(branchName);
-                jobRepository.save(job);
-            }
-
-            // 步骤5: 确保分支存在（如果不存在则创建）
+            
+            // 步骤4: 创建或获取GitLab项目
+            String projectName = "job-" + job.getId();
+            String projectDesc = "Generated code for Job " + job.getJobCode();
+            Map<String, Object> project = gitLabService.createOrGetProject(groupId, projectName, projectDesc);
+            Long projectId = ((Number) project.get("id")).longValue();
+            
+            // 步骤5: 检查并创建v.1.0.0分支
             ensureBranchExists(projectId, branchName);
-
-            // 步骤6: 上传文件（幂等操作）
-            uploadFileToGitLab(projectId, branchName, file, artifact);
-
-            // 步骤7: 更新产出物的 Git 信息
+            
+            // 步骤6: 扫描并上传所有文件
+            List<Artifact> allArtifacts = artifactRepository.findByJobId(job.getId());
+            log.info("Found {} artifacts total", allArtifacts.size());
+            
+            // 过滤掉PROJECT类型的artifact，只上传实际文件
+            List<Artifact> fileArtifacts = allArtifacts.stream()
+                .filter(a -> !Artifact.ArtifactType.PROJECT.name().equals(a.getType()))
+                .toList();
+            log.info("Found {} file artifacts to upload", fileArtifacts.size());
+            
+            if (!fileArtifacts.isEmpty()) {
+                uploadFilesUsingCommitApi(projectId, branchName, fileArtifacts);
+            }
+            
+            // 步骤7: 更新artifact的Git信息
             updateArtifactGitInfo(
-                artifact.getId(),
+                artifactId,
                 projectId,
-                (String) project.get("web_url"),
+                gitLabConfig.getUrl() + "/" + projectId,
                 branchName,
-                null,  // commitId 可以在需要时添加
-                artifact.getName()  // 使用 name 作为仓库内的相对路径
+                null,
+                projectName
             );
 
             log.info("Artifact {} delivered to GitLab successfully", artifactId);
@@ -264,7 +236,7 @@ public class ArtifactService {
     }
 
     /**
-     * 确保分支存在
+     * 确保分支存在（简化版）
      */
     private void ensureBranchExists(Long projectId, String branchName) {
         try {
@@ -272,44 +244,64 @@ public class ArtifactService {
             String url = gitlabUrl + "/api/v4/projects/" + projectId + "/repository/branches/" + URLEncoder.encode(branchName, "UTF-8");
 
             // 检查分支是否存在
-            ResponseEntity<Map> response = gitLabConfig.callGitLabApiForMap(url, HttpMethod.GET, null);
+            try {
+                ResponseEntity<Map> response = gitLabConfig.callGitLabApiForMap(url, HttpMethod.GET, null);
 
-            if (response.getStatusCode() == HttpStatus.OK) {
-                log.info("Branch already exists: {}", branchName);
-                return;
-            }
-
-            // 分支不存在，尝试创建
-            log.info("Branch does not exist, creating: {}", branchName);
-
-            // 先检查项目是否有 main 分支
-            String mainBranchUrl = gitlabUrl + "/api/v4/projects/" + projectId + "/repository/branches/main";
-            ResponseEntity<Map> mainResponse = gitLabConfig.callGitLabApiForMap(mainBranchUrl, HttpMethod.GET, null);
-
-            String refBranch = "main";
-            if (mainResponse.getStatusCode() != HttpStatus.OK) {
-                // 尝试 master 分支
-                String masterBranchUrl = gitlabUrl + "/api/v4/projects/" + projectId + "/repository/branches/master";
-                ResponseEntity<Map> masterResponse = gitLabConfig.callGitLabApiForMap(masterBranchUrl, HttpMethod.GET, null);
-                if (masterResponse.getStatusCode() == HttpStatus.OK) {
-                    refBranch = "master";
+                if (response.getStatusCode() == HttpStatus.OK) {
+                    log.info("Branch already exists: {}", branchName);
+                    return;
+                }
+            } catch (RuntimeException e) {
+                // 如果是404错误，说明分支不存在，继续创建
+                if (e.getCause() instanceof org.springframework.web.client.HttpClientErrorException) {
+                    org.springframework.web.client.HttpClientErrorException httpEx = 
+                        (org.springframework.web.client.HttpClientErrorException) e.getCause();
+                    if (httpEx.getStatusCode() == HttpStatus.NOT_FOUND) {
+                        log.info("Branch does not exist, creating: {}", branchName);
+                    } else {
+                        throw e;
+                    }
                 } else {
-                    throw new RuntimeException("无法找到默认分支（main 或 master），请先创建初始提交");
+                    throw e;
                 }
             }
 
-            // 创建新分支
-            String createBranchUrl = gitlabUrl + "/api/v4/projects/" + projectId + "/repository/branches";
-            Map<String, Object> branchData = new HashMap<>();
-            branchData.put("branch", branchName);
-            branchData.put("ref", refBranch);
+            // 检查项目是否有任何分支
+            boolean hasBranches = gitLabService.checkProjectHasBranches(projectId);
 
-            ResponseEntity<Map> createResponse = gitLabConfig.callGitLabApiForMap(createBranchUrl, HttpMethod.POST, branchData);
+            if (hasBranches) {
+                // 有其他分支，创建新分支
+                String createBranchUrl = gitlabUrl + "/api/v4/projects/" + projectId + "/repository/branches";
+                Map<String, Object> branchData = new HashMap<>();
+                branchData.put("branch", branchName);
+                branchData.put("ref", "main");
 
-            if (createResponse.getStatusCode() == HttpStatus.CREATED) {
-                log.info("Branch created successfully: {}", branchName);
+                ResponseEntity<Map> createResponse = gitLabConfig.callGitLabApiForMap(createBranchUrl, HttpMethod.POST, branchData);
+
+                if (createResponse.getStatusCode() == HttpStatus.CREATED) {
+                    log.info("Branch created successfully: {}", branchName);
+                } else {
+                    throw new RuntimeException("创建分支失败，状态码: " + createResponse.getStatusCode());
+                }
             } else {
-                throw new RuntimeException("创建分支失败，状态码: " + createResponse.getStatusCode());
+                // 空项目，创建初始提交
+                log.info("Creating initial commit on branch {} for new project {}", branchName, projectId);
+                String fileUrl = gitlabUrl + "/api/v4/projects/" + projectId + "/repository/files/README.md";
+                Map<String, Object> fileData = new HashMap<>();
+                fileData.put("file_path", "README.md");
+                fileData.put("branch", branchName);
+                fileData.put("content", "# " + branchName + "\n\nInitial commit");
+                fileData.put("commit_message", "Initial commit");
+                fileData.put("author_email", "aigen@example.com");
+                fileData.put("author_name", "AIGen");
+
+                ResponseEntity<Map> fileResponse = gitLabConfig.callGitLabApiForMap(fileUrl, HttpMethod.POST, fileData);
+
+                if (fileResponse.getStatusCode() == HttpStatus.CREATED) {
+                    log.info("Initial commit created on branch {}", branchName);
+                } else {
+                    throw new RuntimeException("创建初始提交失败，状态码: " + fileResponse.getStatusCode());
+                }
             }
 
         } catch (Exception e) {
@@ -318,45 +310,67 @@ public class ArtifactService {
         }
     }
 
+    
+
     /**
-     * 上传文件到 GitLab（幂等操作）
+     * 使用Commit API批量上传文件
      */
-    private void uploadFileToGitLab(Long projectId, String branchName, File file, Artifact artifact) {
+    private void uploadFilesUsingCommitApi(Long projectId, String branchName, List<Artifact> artifacts) {
         try {
-            String content = Files.readString(file.toPath());
+            log.info("Uploading {} files using Commit API to project {} on branch {}", artifacts.size(), projectId, branchName);
 
-            // 使用 artifact 的 name 作为仓库内的相对路径（如 frontend/src/App.vue）
-            String repositoryPath = artifact.getName();
-            log.info("Uploading file to GitLab - projectId: {}, branch: {}, path: {}", projectId, branchName, repositoryPath);
-
-            // 构建 GitLab API URL - 需要对路径进行两次编码
-            // 第一次：对文件路径进行编码（替换 /）
-            String encodedPath = repositoryPath.replace("/", "%2F");
             String gitlabUrl = gitLabConfig.getUrl();
-            String fileUrl = gitlabUrl + "/api/v4/projects/" + projectId + "/repository/files/" + encodedPath;
+            String commitUrl = gitlabUrl + "/api/v4/projects/" + projectId + "/repository/commits";
 
-            log.debug("GitLab API URL: {}", fileUrl);
+            // 准备提交数据
+            Map<String, Object> commitData = new HashMap<>();
+            commitData.put("branch", branchName);
+            commitData.put("commit_message", "Batch upload artifacts");
+            commitData.put("author_email", "aigen@example.com");
+            commitData.put("author_name", "AIGen");
 
-            // 准备请求数据
-            Map<String, Object> fileData = new HashMap<>();
-            fileData.put("file_path", repositoryPath);
-            fileData.put("branch", branchName);
-            fileData.put("content", content);
-            fileData.put("commit_message", "Deliver artifact: " + artifact.getName());
+            // 准备文件操作列表
+            List<Map<String, Object>> actions = new java.util.ArrayList<>();
 
-            // 调用 GitLab API 上传文件
-            ResponseEntity<Map> response = gitLabConfig.callGitLabApiForMap(fileUrl, HttpMethod.POST, fileData);
+            for (Artifact artifact : artifacts) {
+                File file = new File(artifact.getPath());
+                if (!file.exists()) {
+                    log.warn("File does not exist, skipping: {}", artifact.getPath());
+                    continue;
+                }
+
+                String content = Files.readString(file.toPath());
+                String repositoryPath = artifact.getName();
+
+                Map<String, Object> action = new HashMap<>();
+                action.put("action", "create");
+                action.put("file_path", repositoryPath);
+                action.put("content", content);
+
+                actions.add(action);
+                log.info("Added file to commit: {}", repositoryPath);
+            }
+
+            if (actions.isEmpty()) {
+                log.warn("No files to upload");
+                return;
+            }
+
+            commitData.put("actions", actions);
+
+            // 调用 GitLab Commit API
+            ResponseEntity<Map> response = gitLabConfig.callGitLabApiForMap(commitUrl, HttpMethod.POST, commitData);
 
             if (response.getStatusCode() == HttpStatus.CREATED) {
-                log.info("File uploaded successfully: {}", repositoryPath);
+                log.info("Batch upload successful: {} files uploaded", actions.size());
             } else {
-                log.error("Upload failed with status: {}, body: {}", response.getStatusCode(), response.getBody());
-                throw new RuntimeException("上传失败，状态码: " + response.getStatusCode());
+                log.error("Batch upload failed with status: {}, body: {}", response.getStatusCode(), response.getBody());
+                throw new RuntimeException("批量上传失败，状态码: " + response.getStatusCode());
             }
 
         } catch (Exception e) {
-            log.error("Failed to upload file to GitLab", e);
-            throw new RuntimeException("文件上传失败: " + e.getMessage(), e);
+            log.error("Failed to upload files using Commit API", e);
+            throw new RuntimeException("批量上传失败: " + e.getMessage(), e);
         }
     }
 }

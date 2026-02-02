@@ -19,8 +19,6 @@ public class GenerationJobDTO {
     private String gitlabCommitId;
     private String gitlabPipelineId;
     private Long gitlabGroupId;
-    private Long gitlabFrontendProjectId;
-    private Long gitlabBackendProjectId;
     private String gitlabPipelineStatus;
     private String gitlabPipelineUrl;
     private String errorMessage;
@@ -40,8 +38,6 @@ public class GenerationJobDTO {
             job.getGitlabCommitId(),
             job.getGitlabPipelineId(),
             job.getGitlabGroupId(),
-            job.getGitlabFrontendProjectId(),
-            job.getGitlabBackendProjectId(),
             job.getGitlabPipelineStatus(),
             job.getGitlabPipelineUrl(),
             job.getErrorMessage(),

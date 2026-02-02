@@ -24,7 +24,11 @@ public class GitLabProperties {
     private String defaultBranch = "main";
     private int timeout = 600; // seconds
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate;
+
+    public GitLabProperties(RestTemplate restTemplate) {
+        this.restTemplate = restTemplate;
+    }
 
     public ResponseEntity<Map> callGitLabApi(String url, HttpMethod method, Object body) {
         return callGitLabApiForMap(url, method, body);

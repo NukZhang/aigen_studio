@@ -1,9 +1,12 @@
 package com.aigen.studio.dto;
 
 import com.aigen.studio.entity.Artifact;
+import com.aigen.studio.entity.GenerationJob;
+import com.aigen.studio.repository.GenerationJobRepository;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 
 @Data
 @NoArgsConstructor
@@ -22,22 +25,36 @@ public class ArtifactDTO {
     private String gitlabCommitId;
     private String gitlabFilePath;
     private java.time.LocalDateTime createdAt;
+    // 作业的 GitLab 信息
+    private Long gitlabGroupId;
 
     public static ArtifactDTO fromEntity(Artifact artifact) {
-        return new ArtifactDTO(
-            artifact.getId(),
-            artifact.getJobId(),
-            artifact.getName(),
-            artifact.getType(),
-            artifact.getPath(),
-            artifact.getPreview(),
-            artifact.getFileSize(),
-            artifact.getGitlabProjectId(),
-            artifact.getGitlabProjectUrl(),
-            artifact.getGitlabBranch(),
-            artifact.getGitlabCommitId(),
-            artifact.getGitlabFilePath(),
-            artifact.getCreatedAt()
-        );
+        ArtifactDTO dto = new ArtifactDTO();
+        dto.setId(artifact.getId());
+        dto.setJobId(artifact.getJobId());
+        dto.setName(artifact.getName());
+        dto.setType(artifact.getType());
+        dto.setPath(artifact.getPath());
+        dto.setPreview(artifact.getPreview());
+        dto.setFileSize(artifact.getFileSize());
+        dto.setGitlabProjectId(artifact.getGitlabProjectId());
+        dto.setGitlabProjectUrl(artifact.getGitlabProjectUrl());
+        dto.setGitlabBranch(artifact.getGitlabBranch());
+        dto.setGitlabCommitId(artifact.getGitlabCommitId());
+        dto.setGitlabFilePath(artifact.getGitlabFilePath());
+        dto.setCreatedAt(artifact.getCreatedAt());
+
+        return dto;
+    }
+
+    public static ArtifactDTO fromEntity(Artifact artifact, GenerationJob job) {
+        ArtifactDTO dto = fromEntity(artifact);
+
+        // 获取作业的 GitLab 信息
+        if (job != null) {
+            dto.setGitlabGroupId(job.getGitlabGroupId());
+        }
+
+        return dto;
     }
 }
