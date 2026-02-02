@@ -3,7 +3,7 @@ import { ElMessage } from 'element-plus'
 
 const api = axios.create({
   baseURL: '/api',
-  timeout: 30000,
+  timeout: 300000, // 5 分钟，因为 iFlow SDK 调用可能需要较长时间
   headers: {
     'Content-Type': 'application/json'
   }

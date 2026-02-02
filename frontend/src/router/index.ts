@@ -4,7 +4,12 @@ import type { RouteRecordRaw } from 'vue-router'
 const routes: RouteRecordRaw[] = [
   {
     path: '/',
-    redirect: '/requirements'
+    redirect: '/workspace'
+  },
+  {
+    path: '/workspace',
+    name: 'Workspace',
+    component: () => import('@/views/Workspace.vue')
   },
   {
     path: '/requirements',

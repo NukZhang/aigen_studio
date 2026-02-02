@@ -131,4 +131,55 @@ public class GenerationJobService {
             .map(GenerationJobDTO::fromEntity)
             .collect(Collectors.toList());
     }
+
+    public String getDeliveryLogs(Long jobId) {
+        log.info("Getting delivery logs for job id: {}", jobId);
+
+        GenerationJob job = jobRepository.findById(jobId)
+            .orElseThrow(() -> new RuntimeException("Job not found with id: " + jobId));
+
+        // 构建交付日志
+        StringBuilder logs = new StringBuilder();
+        logs.append("=== 交付日志 ===\n");
+        logs.append(String.format("作业代码: %s\n", job.getJobCode()));
+        logs.append(String.format("状态: %s\n", job.getStatus()));
+        logs.append(String.format("创建时间: %s\n", job.getCreatedAt()));
+        logs.append("\n=== GitLab 信息 ===\n");
+
+        if (job.getGitlabGroupId() != null) {
+            logs.append(String.format("GitLab 群组 ID: %d\n", job.getGitlabGroupId()));
+        }
+
+        if (job.getGitlabBranch() != null) {
+            logs.append(String.format("分支: %s\n", job.getGitlabBranch()));
+        }
+
+        if (job.getGitlabCommitId() != null) {
+            logs.append(String.format("提交 ID: %s\n", job.getGitlabCommitId()));
+        }
+
+        if (job.getGitlabPipelineId() != null) {
+            logs.append(String.format("Pipeline ID: %s\n", job.getGitlabPipelineId()));
+        }
+
+        if (job.getGitlabPipelineStatus() != null) {
+            logs.append(String.format("Pipeline 状态: %s\n", job.getGitlabPipelineStatus()));
+        }
+
+        if (job.getGitlabPipelineUrl() != null) {
+            logs.append(String.format("Pipeline URL: %s\n", job.getGitlabPipelineUrl()));
+        }
+
+        if (job.getLogOutput() != null && !job.getLogOutput().isEmpty()) {
+            logs.append("\n=== 执行日志 ===\n");
+            logs.append(job.getLogOutput());
+        }
+
+        if (job.getErrorMessage() != null) {
+            logs.append("\n=== 错误信息 ===\n");
+            logs.append(job.getErrorMessage());
+        }
+
+        return logs.toString();
+    }
 }

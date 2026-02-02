@@ -1,86 +1,164 @@
 <template>
   <div id="app">
-    <el-container>
-      <el-header>
-        <div class="header-content">
-          <h1 class="logo">AIGen Studio</h1>
-          <el-menu
-            :default-active="activeMenu"
-            mode="horizontal"
-            router
-            class="nav-menu"
-          >
-            <el-menu-item index="/requirements">需求管理</el-menu-item>
-            <el-menu-item index="/jobs">作业管理</el-menu-item>
-            <el-menu-item index="/artifacts">产出物</el-menu-item>
-          </el-menu>
+    <el-container class="app-container">
+      <!-- 侧边栏 -->
+      <el-aside width="64px" class="sidebar">
+        <div class="sidebar-header">
+          <div class="logo">AI</div>
         </div>
-      </el-header>
-      <el-main>
-        <router-view />
-      </el-main>
+        <div class="sidebar-menu">
+          <div
+            class="menu-item"
+            :class="{ active: currentRoute === 'workspace' }"
+            @click="navigateTo('workspace')"
+          >
+            <el-icon><HomeFilled /></el-icon>
+            <span class="menu-label">工作区</span>
+          </div>
+          <div
+            class="menu-item"
+            :class="{ active: currentRoute === 'requirements' }"
+            @click="navigateTo('requirements')"
+          >
+            <el-icon><Document /></el-icon>
+            <span class="menu-label">需求</span>
+          </div>
+          <div
+            class="menu-item"
+            :class="{ active: currentRoute === 'jobs' }"
+            @click="navigateTo('jobs')"
+          >
+            <el-icon><List /></el-icon>
+            <span class="menu-label">作业</span>
+          </div>
+          <div
+            class="menu-item"
+            :class="{ active: currentRoute === 'artifacts' }"
+            @click="navigateTo('artifacts')"
+          >
+            <el-icon><Folder /></el-icon>
+            <span class="menu-label">产出物</span>
+          </div>
+        </div>
+      </el-aside>
+
+      <!-- 主内容区 -->
+      <el-container class="main-container">
+        <el-main class="main-content">
+          <router-view />
+        </el-main>
+      </el-container>
     </el-container>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
+import { HomeFilled, Document, List, Folder } from '@element-plus/icons-vue'
 
 const route = useRoute()
-const activeMenu = computed(() => route.path)
+const router = useRouter()
+
+const currentRoute = computed(() => {
+  const path = route.path
+  if (path.startsWith('/workspace')) return 'workspace'
+  if (path.startsWith('/requirements')) return 'requirements'
+  if (path.startsWith('/jobs')) return 'jobs'
+  if (path.startsWith('/artifacts')) return 'artifacts'
+  return 'workspace'
+})
+
+const navigateTo = (routeName: string) => {
+  router.push(`/${routeName}`)
+}
 </script>
 
 <style scoped>
 #app {
   min-height: 100vh;
+  background-color: #1a1a1a;
+  color: #e0e0e0;
 }
 
-.el-header {
-  background-color: #409eff;
-  color: white;
-  padding: 0;
+.app-container {
+  height: 100vh;
 }
 
-.header-content {
-  max-width: 1400px;
-  margin: 0 auto;
+/* 侧边栏样式 */
+.sidebar {
+  background-color: #2a2a2a;
+  border-right: 1px solid #3a3a3a;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  padding: 0 20px;
-  height: 60px;
+  padding: 16px 0;
+}
+
+.sidebar-header {
+  margin-bottom: 24px;
 }
 
 .logo {
-  margin: 0 40px 0 0;
-  font-size: 24px;
+  width: 32px;
+  height: 32px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-weight: bold;
+  font-size: 14px;
+  color: white;
 }
 
-.nav-menu {
-  background-color: transparent;
-  border: none;
+.sidebar-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
   flex: 1;
 }
 
-.nav-menu .el-menu-item {
-  color: white;
-  font-size: 16px;
+.menu-item {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  color: #b0b0b0;
 }
 
-.nav-menu .el-menu-item:hover {
+.menu-item:hover {
   background-color: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
 }
 
-.nav-menu .el-menu-item.is-active {
-  background-color: rgba(255, 255, 255, 0.2);
-  border-bottom: 2px solid white;
+.menu-item.active {
+  background-color: rgba(102, 126, 234, 0.2);
+  color: #667eea;
 }
 
-.el-main {
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: 20px;
-  width: 100%;
+.menu-item .el-icon {
+  font-size: 20px;
+}
+
+.menu-label {
+  font-size: 10px;
+  margin-top: 2px;
+}
+
+/* 主内容区样式 */
+.main-container {
+  flex: 1;
+  background-color: #1a1a1a;
+}
+
+.main-content {
+  padding: 0;
+  overflow: hidden;
 }
 </style>

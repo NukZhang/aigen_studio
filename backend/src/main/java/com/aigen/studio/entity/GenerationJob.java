@@ -48,12 +48,6 @@ public class GenerationJob {
     @Column(name = "gitlab_group_id")
     private Long gitlabGroupId;
 
-    @Column(name = "gitlab_frontend_project_id")
-    private Long gitlabFrontendProjectId;
-
-    @Column(name = "gitlab_backend_project_id")
-    private Long gitlabBackendProjectId;
-
     @Column(name = "gitlab_pipeline_status")
     private String gitlabPipelineStatus;
 

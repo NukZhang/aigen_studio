@@ -34,7 +34,15 @@
             <el-tag :type="getTypeColor(row.type)">{{ getTypeText(row.type) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="path" label="路径" min-width="300" />
+        <el-table-column prop="path" label="路径" min-width="250" />
+        <el-table-column label="GitLab 群组" width="150">
+          <template #default="{ row }">
+            <el-tag v-if="row.gitlabGroupId" type="info" size="small">
+              群组 ID: {{ row.gitlabGroupId }}
+            </el-tag>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
         <el-table-column label="Git 地址" width="200">
           <template #default="{ row }">
             <el-link
@@ -56,7 +64,7 @@
           </template>
         </el-table-column>
         <el-table-column prop="createdAt" label="创建时间" width="180" />
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="280" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" size="small" @click="viewArtifact(row)">
               查看
@@ -65,13 +73,23 @@
               下载
             </el-button>
             <el-button 
+              v-if="row.type === 'FRONTEND_CODE' || row.type === 'BACKEND_CODE' || row.type === 'PROJECT'"
               link 
               type="warning" 
               size="small" 
               @click="deliverToGitLab(row)"
               :loading="deliveringArtifactId === row.id"
             >
-              交付到GitLab
+              {{ row.type === 'PROJECT' ? '交付整个项目到GitLab' : '交付到GitLab' }}
+            </el-button>
+            <el-button 
+              v-if="row.type === 'PROJECT' || row.gitlabGroupId"
+              link 
+              type="info" 
+              size="small" 
+              @click="viewDeliveryLogs(row)"
+            >
+              交付日志
             </el-button>
           </template>
         </el-table-column>
@@ -81,7 +99,7 @@
     </el-card>
 
     <!-- 查看详情对话框 -->
-    <el-dialog v-model="detailVisible" title="产出物详情" width="60%">
+    <el-dialog v-model="detailVisible" title="产出物详情" width="70%">
       <el-descriptions v-if="selectedArtifact" :column="2" border>
         <el-descriptions-item label="ID">{{ selectedArtifact.id }}</el-descriptions-item>
         <el-descriptions-item label="作业ID">{{ selectedArtifact.jobId }}</el-descriptions-item>
@@ -93,12 +111,61 @@
         <el-descriptions-item label="文件大小">{{ selectedArtifact.fileSize ? formatFileSize(selectedArtifact.fileSize) : '-' }}</el-descriptions-item>
         <el-descriptions-item label="创建时间">{{ selectedArtifact.createdAt }}</el-descriptions-item>
       </el-descriptions>
+
+      <!-- GitLab 信息 -->
+      <div v-if="selectedArtifact" style="margin-top: 20px">
+        <h4>GitLab 信息</h4>
+        <el-card>
+          <el-descriptions :column="2" border>
+            <el-descriptions-item label="GitLab 群组ID">
+              {{ selectedArtifact.gitlabGroupId || '-' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="分支">
+              {{ selectedArtifact.gitlabBranch || '-' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="前端项目" :span="2">
+              <el-link
+                v-if="selectedArtifact.gitlabFrontendProjectUrl"
+                :href="selectedArtifact.gitlabFrontendProjectUrl"
+                target="_blank"
+                type="primary"
+                :underline="false"
+              >
+                <el-icon><Link /></el-icon>
+                {{ selectedArtifact.gitlabFrontendProjectUrl }}
+              </el-link>
+              <span v-else>-</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="后端项目" :span="2">
+              <el-link
+                v-if="selectedArtifact.gitlabBackendProjectUrl"
+                :href="selectedArtifact.gitlabBackendProjectUrl"
+                target="_blank"
+                type="primary"
+                :underline="false"
+              >
+                <el-icon><Link /></el-icon>
+                {{ selectedArtifact.gitlabBackendProjectUrl }}
+              </el-link>
+              <span v-else>-</span>
+            </el-descriptions-item>
+          </el-descriptions>
+        </el-card>
+      </div>
+
       <div v-if="selectedArtifact?.preview" style="margin-top: 20px">
         <h4>预览</h4>
         <el-card>
           <pre class="preview-content">{{ selectedArtifact.preview }}</pre>
         </el-card>
       </div>
+    </el-dialog>
+
+    <!-- 交付日志对话框 -->
+    <el-dialog v-model="logsVisible" title="交付日志" width="80%">
+      <el-card v-loading="logsLoading">
+        <pre class="logs-content">{{ deliveryLogs || '暂无日志' }}</pre>
+      </el-card>
     </el-dialog>
   </div>
 </template>
@@ -118,6 +185,9 @@ const detailVisible = ref(false)
 const selectedArtifact = ref<Artifact | null>(null)
 const distinctJobs = ref<Array<{ jobId: number; jobCode: string }>>([])
 const deliveringArtifactId = ref<number | null>(null)
+const logsVisible = ref(false)
+const logsLoading = ref(false)
+const deliveryLogs = ref('')
 
 const filteredArtifacts = computed(() => {
   let result = artifacts.value
@@ -194,6 +264,21 @@ const deliverToGitLab = async (artifact: Artifact) => {
   }
 }
 
+const viewDeliveryLogs = async (artifact: Artifact) => {
+  logsVisible.value = true
+  logsLoading.value = true
+  deliveryLogs.value = ''
+  try {
+    const { data } = await artifactApi.getDeliveryLogs(artifact.jobId)
+    deliveryLogs.value = data || '暂无交付日志'
+  } catch (error: any) {
+    ElMessage.error('获取交付日志失败: ' + (error.response?.data?.message || error.message))
+    deliveryLogs.value = '获取失败'
+  } finally {
+    logsLoading.value = false
+  }
+}
+
 const getTypeColor = (type: string) => {
   const map: Record<string, string> = {
     FRONTEND_CODE: 'success',
@@ -261,5 +346,25 @@ onMounted(() => {
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.logs-content {
+  background-color: #1e1e1e;
+  color: #d4d4d4;
+  padding: 15px;
+  border-radius: 4px;
+  max-height: 500px;
+  overflow-y: auto;
+  margin: 0;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+h4 {
+  margin: 10px 0;
+  font-weight: 600;
 }
 </style>

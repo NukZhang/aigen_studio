@@ -14,6 +14,12 @@ export interface Artifact {
   gitlabCommitId: string | null
   gitlabFilePath: string | null
   createdAt: string
+  // 作业的 GitLab 信息
+  gitlabGroupId: number | null
+  gitlabFrontendProjectId: number | null
+  gitlabBackendProjectId: number | null
+  gitlabFrontendProjectUrl: string | null
+  gitlabBackendProjectUrl: string | null
 }
 
 export const artifactApi = {
@@ -35,5 +41,10 @@ export const artifactApi = {
 
   deliverToGitLab: (id: number) => {
     return api.post(`/artifacts/${id}/deliver-gitlab`)
+  },
+
+  // 获取作业的交付日志
+  getDeliveryLogs: (jobId: number) => {
+    return api.get<string>(`/jobs/${jobId}/delivery-logs`)
   }
 }

@@ -91,13 +91,14 @@
               下载
             </el-button>
             <el-button 
+              v-if="row.type === 'FRONTEND_CODE' || row.type === 'BACKEND_CODE' || row.type === 'PROJECT'"
               link 
               type="warning" 
               size="small" 
               @click="deliverToGitLab(row)"
               :loading="deliveringArtifactId === row.id"
             >
-              交付到GitLab
+              {{ row.type === 'PROJECT' ? '交付整个项目到GitLab' : '交付到GitLab' }}
             </el-button>
           </template>
         </el-table-column>
