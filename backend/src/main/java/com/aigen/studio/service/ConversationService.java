@@ -2,262 +2,37 @@ package com.aigen.studio.service;
 
 import com.aigen.studio.dto.*;
 import com.aigen.studio.entity.*;
-import com.aigen.studio.repository.GenerationJobRepository;
-import com.aigen.studio.repository.IRDocumentRepository;
-import com.aigen.studio.repository.RequirementRepository;
 import com.aigen.studio.repository.ConversationRepository;
 import com.aigen.studio.repository.MessageRepository;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
 /**
  * 对话服务
- * 将 GenerationJob 的日志转换为对话格式，支持实时对话交互
+ * 支持独立对话流程的实时交互
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class ConversationService {
 
-    private final GenerationJobRepository generationJobRepository;
-    private final RequirementRepository requirementRepository;
-    private final IRDocumentRepository irDocumentRepository;
     private final ConversationRepository conversationRepository;
     private final MessageRepository messageRepository;
-    private final TodoService todoService;
     private final IFlowTaskService iFlowTaskService;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final PreviewScriptService previewScriptService;
 
-    /**
-     * 创建对话（基于 Job）
-     */
-    public ConversationDTO createConversation(Long jobId) {
-        GenerationJob job = generationJobRepository.findById(jobId)
-                .orElseThrow(() -> new RuntimeException("Job not found: " + jobId));
-
-        return getConversationByJobId(jobId);
-    }
-
-    /**
-     * 根据 ID 获取对话
-     */
-    public Optional<ConversationDTO> getConversationById(Long id) {
-        return generationJobRepository.findById(id)
-                .map(job -> getConversationByJobId(job.getId()));
-    }
-
-    /**
-     * 根据 Job ID 获取对话
-     */
-    public ConversationDTO getConversationByJobId(Long jobId) {
-        GenerationJob job = generationJobRepository.findById(jobId)
-                .orElseThrow(() -> new RuntimeException("Job not found: " + jobId));
-
-        Requirement requirement = requirementRepository.findById(job.getRequirementId())
-                .orElse(null);
-
-        ConversationDTO conversation = new ConversationDTO();
-        conversation.setId(job.getId());
-        conversation.setProjectId(job.getJobCode());
-        conversation.setProjectName(requirement != null ? requirement.getTitle() : "Unknown Project");
-        conversation.setStatus(job.getStatus().name());
-        conversation.setCreatedAt(job.getCreatedAt());
-        conversation.setUpdatedAt(job.getUpdatedAt());
-
-        // 解析日志为消息列表
-        List<MessageDTO> messages = parseLogsToMessages(job.getLogOutput());
-        conversation.setMessages(messages);
-
-        // 从 Job ID 获取待办事项列表（包含从 logOutput 解析的状态）
-        List<TodoItemDTO> todos = todoService.getTodosByJobId(jobId);
-        conversation.setTodos(todos);
-
-        return conversation;
-    }
-
-    /**
-     * 发送消息
-     */
-    public MessageDTO sendMessage(Long conversationId, MessageDTO message) {
-        log.info("Sending message to conversation {}: {}", conversationId, message.getContent());
-
-        // 获取对应的 Job
-        GenerationJob job = generationJobRepository.findById(conversationId)
-                .orElseThrow(() -> new RuntimeException("Conversation not found: " + conversationId));
-
-        // 保存用户消息到日志
-        String userMessageLog = formatLogMessage(message.getRole(), message.getContent());
-        String updatedLogs = job.getLogOutput() != null ? job.getLogOutput() + "\n" + userMessageLog : userMessageLog;
-        job.setLogOutput(updatedLogs);
-        job.setUpdatedAt(LocalDateTime.now());
-        generationJobRepository.save(job);
-
-        // TODO: 调用 iFlow SDK 生成 AI 回复
-        // 这里暂时返回一个简单的 AI 回复
-        MessageDTO aiResponse = new MessageDTO();
-        aiResponse.setId((long) (parseLogsToMessages(updatedLogs).size() + 1));
-        aiResponse.setRole("assistant");
-        aiResponse.setSenderName("AI 开发者");
-        aiResponse.setContent("我已收到您的消息：" + message.getContent() + "\n\n目前 AI 回复功能正在开发中，稍后将集成 iFlow SDK 实现真实的代码生成。");
-        aiResponse.setTimestamp(LocalDateTime.now());
-        aiResponse.setToolCalls(new ArrayList<>());
-
-        // 保存 AI 回复到日志
-        String aiResponseLog = formatLogMessage(aiResponse.getRole(), aiResponse.getContent());
-        job.setLogOutput(job.getLogOutput() + "\n" + aiResponseLog);
-        generationJobRepository.save(job);
-
-        return aiResponse;
-    }
-
-    /**
-     * 获取对话的消息列表
-     */
-    public List<MessageDTO> getMessages(Long conversationId) {
-        GenerationJob job = generationJobRepository.findById(conversationId)
-                .orElseThrow(() -> new RuntimeException("Conversation not found: " + conversationId));
-
-        return parseLogsToMessages(job.getLogOutput());
-    }
-
-    /**
-     * 格式化日志消息
-     */
-    private String formatLogMessage(String role, String content) {
-        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
-        return String.format("[%s] %s: %s", timestamp, role, content);
-    }
-
-    /**
-     * 解析日志为消息列表
-     */
-    private List<MessageDTO> parseLogsToMessages(String logs) {
-        List<MessageDTO> messages = new ArrayList<>();
-
-        if (logs == null || logs.isEmpty()) {
-            return messages;
-        }
-
-        // 按行分割日志
-        String[] lines = logs.split("\n");
-        MessageDTO currentMessage = null;
-        StringBuilder currentContent = new StringBuilder();
-
-        // 正则表达式匹配日志行
-        Pattern logPattern = Pattern.compile("^\\[(.*?)\\]\\s*(.*)$");
-        Pattern toolCallPattern = Pattern.compile("^ToolCall:\\s*(\\w+)\\s*-\\s*(.*)$");
-        Pattern toolResultPattern = Pattern.compile("^ToolResult:\\s*(\\w+)\\s*-\\s*(.*)$");
-
-        for (String line : lines) {
-            Matcher matcher = logPattern.matcher(line);
-
-            if (matcher.matches()) {
-                // 保存上一条消息
-                if (currentMessage != null) {
-                    currentMessage.setContent(currentContent.toString().trim());
-                    messages.add(currentMessage);
-                }
-
-                // 创建新消息
-                String timestampStr = matcher.group(1);
-                String content = matcher.group(2);
-
-                currentMessage = new MessageDTO();
-                currentMessage.setId((long) messages.size());
-                currentMessage.setTimestamp(parseTimestamp(timestampStr));
-                currentContent = new StringBuilder();
-
-                // 判断角色
-                if (content.startsWith("User:") || content.startsWith("user:")) {
-                    currentMessage.setRole("user");
-                    currentMessage.setSenderName("用户");
-                    currentMessage.setContent(content.substring(5).trim());
-                } else if (content.startsWith("Assistant:") || content.startsWith("assistant:")) {
-                    currentMessage.setRole("assistant");
-                    currentMessage.setSenderName("AI 开发者");
-                    currentMessage.setToolCalls(new ArrayList<>());
-                } else {
-                    // 默认为用户消息
-                    currentMessage.setRole("user");
-                    currentMessage.setSenderName("用户");
-                    currentMessage.setContent(content);
-                }
-            } else {
-                // 处理工具调用
-                Matcher toolCallMatcher = toolCallPattern.matcher(line);
-                if (toolCallMatcher.matches() && currentMessage != null && "assistant".equals(currentMessage.getRole())) {
-                    String toolName = toolCallMatcher.group(1);
-                    String arguments = toolCallMatcher.group(2);
-
-                    ToolCallDTO toolCall = new ToolCallDTO();
-                    toolCall.setId((long) currentMessage.getToolCalls().size());
-                    toolCall.setToolName(toolName);
-                    toolCall.setArguments(arguments);
-                    toolCall.setStatus("running");
-                    currentMessage.getToolCalls().add(toolCall);
-                }
-
-                // 处理工具结果
-                Matcher toolResultMatcher = toolResultPattern.matcher(line);
-                if (toolResultMatcher.matches() && currentMessage != null && "assistant".equals(currentMessage.getRole())) {
-                    String toolName = toolResultMatcher.group(1);
-                    String result = toolResultMatcher.group(2);
-
-                    // 更新对应的工具调用结果
-                    if (currentMessage.getToolCalls() != null) {
-                        for (ToolCallDTO toolCall : currentMessage.getToolCalls()) {
-                            if (toolCall.getToolName().equals(toolName) && "running".equals(toolCall.getStatus())) {
-                                toolCall.setResult(result);
-                                toolCall.setStatus("success");
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                // 累积内容
-                if (currentMessage != null && !line.startsWith("ToolCall:") && !line.startsWith("ToolResult:")) {
-                    if (currentContent.length() > 0) {
-                        currentContent.append("\n");
-                    }
-                    currentContent.append(line);
-                }
-            }
-        }
-
-        // 保存最后一条消息
-        if (currentMessage != null) {
-            currentMessage.setContent(currentContent.toString().trim());
-            messages.add(currentMessage);
-        }
-
-        return messages;
-    }
-
-    /**
-     * 解析时间戳
-     */
-    private LocalDateTime parseTimestamp(String timestampStr) {
-        try {
-            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-            return LocalDateTime.parse(timestampStr, formatter);
-        } catch (Exception e) {
-            log.warn("Failed to parse timestamp: {}", timestampStr);
-            return LocalDateTime.now();
-        }
-    }
+    @Value("${iflow.sdk.output-dir:./output}")
+    private String outputDir;
 
     // ==================== 独立对话流程方法 ====================
 
@@ -311,19 +86,6 @@ public class ConversationService {
                 .orElseThrow(() -> new RuntimeException("Conversation not found: " + conversationId));
 
         if (request.getConfirmed()) {
-            // 更新需求的标题和描述
-            if (conversation.getRequirementId() != null) {
-                Optional<Requirement> requirementOpt = requirementRepository.findById(conversation.getRequirementId());
-                if (requirementOpt.isPresent()) {
-                    Requirement requirement = requirementOpt.get();
-                    requirement.setTitle(conversation.getProjectName());
-                    requirement.setDescription(conversation.getUserRequirement());
-                    requirement.setStatus(Requirement.RequirementStatus.IN_PROGRESS);
-                    requirementRepository.save(requirement);
-                    log.info("Updated requirement {} for conversation {}", requirement.getId(), conversationId);
-                }
-            }
-            
             // 用户确认理解，进入代码生成阶段
             conversation.setUnderstandingConfirmed(true);
             conversation.setStage(ConversationStage.CODE_GENERATING);
@@ -362,8 +124,8 @@ public class ConversationService {
             sendProgressMessage(conversationId, "开始生成代码...", "system");
 
             // 创建输出目录
-            java.nio.file.Path outputPath = java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"), "conversation-" + conversationId);
-            java.nio.file.Files.createDirectories(outputPath);
+            Path outputPath = Paths.get(outputDir, "conversation-" + conversationId);
+            Files.createDirectories(outputPath);
 
             conversation.setGeneratedCodePath(outputPath.toString());
             conversationRepository.save(conversation);
@@ -380,6 +142,8 @@ public class ConversationService {
                 // 保存进度消息到消息表
                 sendProgressMessage(conversationId, message, "system");
             });
+
+            ensurePreviewScripts(outputPath);
 
             // 更新对话状态
             conversation.setStage(ConversationStage.READY_TO_START);
@@ -419,7 +183,6 @@ public class ConversationService {
 
             Message message = new Message();
             message.setConversationId(conversationId);
-            message.setRequirementId(conversation.getRequirementId());
             message.setRole(Message.MessageRole.valueOf(role.toUpperCase()));
             message.setSenderName("系统");
             message.setContent(content);
@@ -429,6 +192,15 @@ public class ConversationService {
         } catch (Exception e) {
             log.error("Failed to send progress message for conversation {}", conversationId, e);
         }
+    }
+
+    private void ensurePreviewScripts(Path outputPath) {
+        Path frontendDir = outputPath.resolve("frontend");
+        if (!Files.isDirectory(frontendDir)) {
+            return;
+        }
+        previewScriptService.ensureFrontendStartScript(frontendDir);
+        previewScriptService.ensureFrontendRouterBase(frontendDir);
     }
 
     /**
@@ -469,26 +241,8 @@ public class ConversationService {
 
         log.info("Sending message to conversation {}: {}", conversationId, message.getContent());
 
-        // 检查是否是第一条消息，如果是则创建需求
-        if (conversation.getRequirementId() == null) {
-            log.info("Creating requirement for conversation: {}", conversationId);
-            Requirement requirement = new Requirement();
-            requirement.setCode("REQ-" + System.currentTimeMillis());
-            requirement.setTitle("新需求");
-            requirement.setDescription(message.getContent());
-            requirement.setStatus(Requirement.RequirementStatus.DRAFT);
-            requirement.setCreatedBy(conversation.getCreatedBy());
-            requirement = requirementRepository.save(requirement);
-            
-            conversation.setRequirementId(requirement.getId());
-            conversationRepository.save(conversation);
-            
-            log.info("Created requirement {} for conversation {}", requirement.getId(), conversationId);
-        }
-        
         // 保存用户消息
         Message userMessage = new Message();
-        userMessage.setRequirementId(conversation.getRequirementId());
         userMessage.setConversationId(conversationId);
         userMessage.setRole(Message.MessageRole.USER);
         userMessage.setSenderName("用户");
@@ -691,7 +445,6 @@ public class ConversationService {
         dto.setProjectName(conversation.getProjectName());
         dto.setStatus(conversation.getStatus().name());
         dto.setStage(conversation.getStage().name());
-        dto.setJobId(conversation.getJobId());
         dto.setUserRequirement(conversation.getUserRequirement());
         dto.setAiUnderstanding(conversation.getAiUnderstanding());
         dto.setUnderstandingConfirmed(conversation.getUnderstandingConfirmed());
@@ -717,9 +470,6 @@ public class ConversationService {
                 })
                 .toList();
         dto.setMessages(messageDTOs);
-
-        // TODO: 从待办事项表中加载待办事项列表
-        dto.setTodos(new ArrayList<>());
 
         return dto;
     }

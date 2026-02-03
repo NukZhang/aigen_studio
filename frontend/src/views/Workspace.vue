@@ -4,16 +4,6 @@
     <div class="chat-panel">
       <div class="chat-header">
         <h2 class="project-title">{{ conversation?.projectName || 'AI 开发者工作区' }}</h2>
-        <div class="header-actions">
-          <el-button size="small" @click="showConversationList = true">
-            <el-icon><List /></el-icon>
-            历史对话
-          </el-button>
-          <el-button size="small" @click="createNewConversation" type="primary">
-            <el-icon><Plus /></el-icon>
-            新建对话
-          </el-button>
-        </div>
       </div>
 
       <!-- 历史对话列表抽屉 -->
@@ -45,14 +35,18 @@
       <div class="stage-indicator" v-if="conversation?.stage">
         <div class="stage-progress">
           <div
-            v-for="stage in stages"
+            v-for="stage in displayStages"
             :key="stage.key"
             class="stage-item"
-            :class="{ active: conversation.stage === stage.key, completed: isStageCompleted(stage.key) }"
+            :class="{
+              active: isStageActive(stage.key),
+              completed: isStageCompleted(stage.key),
+              failed: isStageFailed(stage.key)
+            }"
           >
             <el-icon>
               <CircleCheck v-if="isStageCompleted(stage.key)" />
-              <Timer v-else-if="conversation.stage === stage.key" />
+              <Timer v-else-if="isStageActive(stage.key)" />
               <CircleClose v-else />
             </el-icon>
             <span class="stage-label">{{ stage.label }}</span>
@@ -236,21 +230,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick, computed } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
-  Plus,
   ChatDotRound,
   Tools,
-  List,
   CircleCheck,
   CircleClose,
   Timer,
   Promotion,
   Monitor,
   FolderOpened,
-  Edit,
   Upload,
   VideoPlay,
   Reading,
@@ -300,6 +291,9 @@ const selectedFile = ref<FileNode | null>(null)
 const conversationId = ref<number | null>(null)
 const showConversationList = ref(false)
 const conversationList = ref<Conversation[]>([])
+const autoRefreshTimer = ref<number | null>(null)
+const isLoadingConversation = ref(false)
+const AUTO_REFRESH_INTERVAL = 3000
 const conversationFileStages = new Set([
   'CODE_GENERATING',
   'READY_TO_START',
@@ -316,16 +310,78 @@ const canAccessConversationFiles = computed(() => {
 })
 const canAccessFiles = computed(() => canAccessConversationFiles.value)
 
-// 对话阶段配置
-const stages = [
+// 对话阶段配置（生成流程）
+const generationStages = [
   { key: 'NEED_INPUT', label: '需求输入' },
   { key: 'UNDERSTANDING', label: '理解需求' },
   { key: 'UNDERSTANDING_CONFIRMED', label: '确认理解' },
   { key: 'CODE_GENERATING', label: '生成代码' },
-  { key: 'READY_TO_START', label: '确认启动' },
-  { key: 'SERVICE_STARTING', label: '启动服务' },
-  { key: 'PREVIEWING', label: '预览' }
+  { key: 'READY_TO_START', label: '确认启动' }
 ]
+
+const generationStageKeys = generationStages.map(stage => stage.key)
+const stageLabelMap: Record<string, string> = {
+  NEED_INPUT: '需求输入',
+  UNDERSTANDING: '理解需求',
+  UNDERSTANDING_CONFIRMED: '确认理解',
+  CODE_GENERATING: '生成代码',
+  READY_TO_START: '确认启动',
+  SERVICE_STARTING: '启动服务',
+  PREVIEWING: '预览',
+  COMPLETED: '生成完成',
+  FAILED: '生成失败'
+}
+
+const displayStages = computed(() => {
+  const stage = conversation.value?.stage
+  if (stage === 'COMPLETED' || stage === 'FAILED') {
+    const terminalLabel = stage === 'COMPLETED' ? '生成完成' : '生成失败'
+    return generationStages.map((item, index) =>
+      index === generationStages.length - 1
+        ? { ...item, label: terminalLabel }
+        : item
+    )
+  }
+  return generationStages
+})
+
+const normalizeStageForProgress = (stage?: string | null) => {
+  if (!stage) return null
+  if (stage === 'SERVICE_STARTING' || stage === 'PREVIEWING' || stage === 'COMPLETED' || stage === 'FAILED') {
+    return 'READY_TO_START'
+  }
+  return stage
+}
+
+const isStageCompleted = (stageKey: string) => {
+  if (!conversation.value?.stage) return false
+  const normalizedStage = normalizeStageForProgress(conversation.value.stage)
+  if (!normalizedStage) return false
+
+  const currentIndex = generationStageKeys.indexOf(normalizedStage)
+  const targetIndex = generationStageKeys.indexOf(stageKey)
+  if (currentIndex === -1 || targetIndex === -1) return false
+
+  const stage = conversation.value.stage
+  if (stage === 'SERVICE_STARTING' || stage === 'PREVIEWING' || stage === 'COMPLETED') {
+    return targetIndex <= currentIndex
+  }
+  return targetIndex < currentIndex
+}
+
+const isStageActive = (stageKey: string) => {
+  if (!conversation.value?.stage) return false
+  const stage = conversation.value.stage
+  if (stage === 'SERVICE_STARTING' || stage === 'PREVIEWING' || stage === 'COMPLETED' || stage === 'FAILED') {
+    return false
+  }
+  const normalizedStage = normalizeStageForProgress(stage)
+  return normalizedStage === stageKey
+}
+
+const isStageFailed = (stageKey: string) => {
+  return conversation.value?.stage === 'FAILED' && stageKey === 'READY_TO_START'
+}
 
 
 onMounted(async () => {
@@ -342,15 +398,64 @@ onMounted(async () => {
   await loadConversationList()
 })
 
+const clearActionQuery = () => {
+  if (!('action' in route.query)) {
+    return
+  }
+  const nextQuery = { ...route.query } as Record<string, string | string[]>
+  delete nextQuery.action
+  router.replace({
+    path: route.path,
+    query: nextQuery
+  })
+}
 
-const loadNewConversation = async (id: number) => {
+watch(
+  () => route.query.action,
+  async (action) => {
+    const actionValue = Array.isArray(action) ? action[0] : action
+    if (!actionValue) return
+
+    if (actionValue === 'history') {
+      showConversationList.value = true
+      clearActionQuery()
+      return
+    }
+
+    if (actionValue === 'new') {
+      await createNewConversation()
+      clearActionQuery()
+    }
+  },
+  { immediate: true }
+)
+
+
+const isChatNearBottom = () => {
+  if (!chatHistoryRef.value) return true
+  const { scrollTop, scrollHeight, clientHeight } = chatHistoryRef.value
+  return scrollHeight - scrollTop - clientHeight < 80
+}
+
+const loadNewConversation = async (id: number, autoScroll: boolean = true) => {
+  if (isLoadingConversation.value) return
+  isLoadingConversation.value = true
   try {
+    const nearBottom = autoScroll && isChatNearBottom()
+    const previousCount = conversation.value?.messages.length ?? 0
     const response = await conversationApi.getNewConversation(id)
     conversation.value = response.data
     await nextTick()
-    scrollToBottom()
+    if (autoScroll) {
+      const newCount = conversation.value?.messages.length ?? 0
+      if (nearBottom || (previousCount === 0 && newCount > 0)) {
+        scrollToBottom()
+      }
+    }
   } catch (error) {
     console.error('Failed to load new conversation:', error)
+  } finally {
+    isLoadingConversation.value = false
   }
 }
 
@@ -368,6 +473,7 @@ const createNewConversation = async () => {
 
     conversationId.value = newConversation.id
     await loadNewConversation(newConversation.id)
+    await loadConversationList()
 
     ElMessage.success('已创建新对话')
   } catch (error) {
@@ -456,15 +562,6 @@ const startPreviewFromConfirm = async () => {
   }
 }
 
-const isStageCompleted = (stageKey: string) => {
-  if (!conversation.value) return false
-
-  const currentStageIndex = stages.findIndex(s => s.key === conversation.value?.stage)
-  const targetStageIndex = stages.findIndex(s => s.key === stageKey)
-
-  return targetStageIndex < currentStageIndex
-}
-
 const sendMessage = async () => {
   if (!inputMessage.value.trim()) {
     return
@@ -546,9 +643,33 @@ const selectConversation = async (conv: Conversation) => {
 }
 
 const getStageLabel = (stage: string) => {
-  const stageItem = stages.find(s => s.key === stage)
-  return stageItem ? stageItem.label : stage
+  return stageLabelMap[stage] || stage
 }
+
+const stopAutoRefresh = () => {
+  if (autoRefreshTimer.value !== null) {
+    window.clearInterval(autoRefreshTimer.value)
+    autoRefreshTimer.value = null
+  }
+}
+
+const startAutoRefresh = () => {
+  stopAutoRefresh()
+  if (!conversationId.value) return
+  autoRefreshTimer.value = window.setInterval(() => {
+    if (conversationId.value) {
+      loadNewConversation(conversationId.value, true)
+    }
+  }, AUTO_REFRESH_INTERVAL)
+}
+
+watch(conversationId, () => {
+  startAutoRefresh()
+})
+
+onUnmounted(() => {
+  stopAutoRefresh()
+})
 </script>
 
 <style scoped>
@@ -870,6 +991,12 @@ const getStageLabel = (stage: string) => {
 .stage-item.completed {
   background-color: rgba(103, 194, 58, 0.2);
   color: #67c23a;
+}
+
+.stage-item.failed {
+  background-color: rgba(245, 108, 108, 0.2);
+  color: #f56c6c;
+  border: 1px solid #f56c6c;
 }
 
 .stage-label {

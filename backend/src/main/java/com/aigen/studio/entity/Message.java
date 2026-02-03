@@ -30,12 +30,6 @@ public class Message {
     private Long conversationId;
 
     /**
-     * 关联的需求 ID
-     */
-    @Column(name = "requirement_id")
-    private Long requirementId;
-
-    /**
      * 角色类型
      */
     @Enumerated(EnumType.STRING)

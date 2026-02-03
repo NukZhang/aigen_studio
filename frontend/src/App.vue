@@ -5,6 +5,30 @@
       <el-aside width="64px" class="sidebar">
         <div class="sidebar-header">
           <div class="logo">AI</div>
+          <div class="sidebar-actions">
+            <el-tooltip content="历史对话" placement="right">
+              <button
+                class="sidebar-action"
+                type="button"
+                data-action="history"
+                aria-label="历史对话"
+                @click="triggerSidebarAction('history')"
+              >
+                <el-icon><List /></el-icon>
+              </button>
+            </el-tooltip>
+            <el-tooltip content="新建对话" placement="right">
+              <button
+                class="sidebar-action sidebar-action-primary"
+                type="button"
+                data-action="new"
+                aria-label="新建对话"
+                @click="triggerSidebarAction('new')"
+              >
+                <el-icon><Plus /></el-icon>
+              </button>
+            </el-tooltip>
+          </div>
         </div>
         <div class="sidebar-menu">
           <div
@@ -32,7 +56,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { HomeFilled } from '@element-plus/icons-vue'
+import { HomeFilled, List, Plus } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -45,6 +69,13 @@ const currentRoute = computed(() => {
 
 const navigateTo = (routeName: string) => {
   router.push(`/${routeName}`)
+}
+
+const triggerSidebarAction = (action: 'history' | 'new') => {
+  router.push({
+    path: '/workspace',
+    query: { ...route.query, action }
+  })
 }
 </script>
 
@@ -71,6 +102,10 @@ const navigateTo = (routeName: string) => {
 
 .sidebar-header {
   margin-bottom: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
 }
 
 .logo {
@@ -84,6 +119,42 @@ const navigateTo = (routeName: string) => {
   font-weight: bold;
   font-size: 14px;
   color: white;
+}
+
+.sidebar-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidebar-action {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid #3a3a3a;
+  background-color: #2a2a2a;
+  color: #b0b0b0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.sidebar-action:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+  border-color: #4a4a4a;
+}
+
+.sidebar-action-primary {
+  border-color: rgba(102, 126, 234, 0.5);
+  color: #667eea;
+}
+
+.sidebar-action-primary:hover {
+  background-color: rgba(102, 126, 234, 0.2);
+  border-color: #667eea;
 }
 
 .sidebar-menu {

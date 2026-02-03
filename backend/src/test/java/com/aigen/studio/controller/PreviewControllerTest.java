@@ -69,7 +69,7 @@ class PreviewControllerTest {
     void startAndStopPreview(@TempDir Path tmp) throws Exception {
         Files.createDirectories(tmp.resolve("frontend"));
         Files.createDirectories(tmp.resolve("backend"));
-        Files.writeString(tmp.resolve("application.yml"), "preview:\n  frontendPort: 3001\n  backendPort: 8081\n");
+        Files.writeString(tmp.resolve("application.yml"), "preview:\n  frontendPort: 3002\n  backendPort: 8081\n");
 
         Conversation conversation = createConversation(tmp);
 
@@ -78,7 +78,7 @@ class PreviewControllerTest {
                 .andExpect(jsonPath("$.running", is(true)))
                 .andExpect(jsonPath("$.frontendRunning", is(true)))
                 .andExpect(jsonPath("$.backendRunning", is(true)))
-                .andExpect(jsonPath("$.frontendUrl", is("http://localhost:3001")))
+                .andExpect(jsonPath("$.frontendUrl", is("http://localhost:3002")))
                 .andExpect(jsonPath("$.backendUrl", is("http://localhost:8081")));
 
         Conversation updated = conversationRepository.findById(conversation.getId()).orElseThrow();

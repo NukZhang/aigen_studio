@@ -95,7 +95,73 @@ const isStopping = ref(false)
 const isRestarting = ref(false)
 
 const isPreviewRunning = computed(() => status.value?.running ?? false)
-const previewUrl = computed(() => status.value?.frontendUrl || status.value?.backendUrl || '')
+
+const resolveHost = () => {
+  if (typeof window === 'undefined') return 'localhost'
+  return window.location.hostname || 'localhost'
+}
+
+const resolveProtocol = () => {
+  if (typeof window === 'undefined') return 'http:'
+  return window.location.protocol || 'http:'
+}
+
+const replaceLocalhost = (rawUrl?: string | null) => {
+  if (!rawUrl) return ''
+  try {
+    const url = new URL(rawUrl)
+    if (['localhost', '127.0.0.1', '::1'].includes(url.hostname)) {
+      url.hostname = resolveHost()
+      url.protocol = resolveProtocol()
+      return url.toString().replace(/\/$/, '')
+    }
+    return rawUrl
+  } catch (error) {
+    return rawUrl
+  }
+}
+
+const normalizeProxyPath = (rawPath: string) => {
+  const normalized = rawPath.startsWith('/') ? rawPath : `/${rawPath}`
+  return normalized.endsWith('/') ? normalized : `${normalized}/`
+}
+
+const shouldUsePreviewProxy = () => {
+  if (typeof window === 'undefined') return false
+  const envFlag = import.meta.env.VITE_PREVIEW_PROXY
+  if (envFlag === 'true') return true
+  if (envFlag === 'false') return false
+  return true
+}
+
+const previewProxyPath = normalizeProxyPath(
+  import.meta.env.VITE_PREVIEW_PROXY_PATH || '/__preview__'
+)
+
+const previewProxyBase = computed(() => {
+  if (typeof window === 'undefined') return ''
+  return `${window.location.origin}${previewProxyPath}`
+})
+
+const previewUrl = computed(() => {
+  const currentStatus = status.value
+  if (!currentStatus) return ''
+
+  if (shouldUsePreviewProxy() && currentStatus.frontendRunning) {
+    return previewProxyBase.value
+  }
+
+  const host = resolveHost()
+  const protocol = resolveProtocol()
+  if (currentStatus.frontendRunning && currentStatus.frontendPort) {
+    return `${protocol}//${host}:${currentStatus.frontendPort}`
+  }
+  if (currentStatus.backendRunning && currentStatus.backendPort) {
+    return `${protocol}//${host}:${currentStatus.backendPort}`
+  }
+
+  return replaceLocalhost(currentStatus.frontendUrl) || replaceLocalhost(currentStatus.backendUrl)
+})
 const conversationId = computed(() => props.conversationId)
 
 const fetchStatus = async () => {

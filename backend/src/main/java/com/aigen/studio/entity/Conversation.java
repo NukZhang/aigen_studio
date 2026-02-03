@@ -45,18 +45,6 @@ public class Conversation {
     private ConversationStage stage;
 
     /**
-     * 关联的需求 ID
-     */
-    @Column(name = "requirement_id")
-    private Long requirementId;
-
-    /**
-     * 关联的作业 ID（代码生成后会有值）
-     */
-    @Column(name = "job_id")
-    private Long jobId;
-
-    /**
      * 用户输入的需求描述
      */
     @Column(name = "user_requirement", columnDefinition = "TEXT")

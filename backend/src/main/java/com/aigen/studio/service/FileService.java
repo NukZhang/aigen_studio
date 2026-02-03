@@ -2,12 +2,9 @@ package com.aigen.studio.service;
 
 import com.aigen.studio.dto.FileNodeDTO;
 import com.aigen.studio.entity.Conversation;
-import com.aigen.studio.entity.GenerationJob;
 import com.aigen.studio.repository.ConversationRepository;
-import com.aigen.studio.repository.GenerationJobRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -29,67 +26,18 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class FileService {
 
-    private final GenerationJobRepository generationJobRepository;
     private final FileWorkspaceService fileWorkspaceService;
     private final ConversationRepository conversationRepository;
-
-    @Value("${iflow.sdk.output-dir:../../generated-code}")
-    private String outputDir;
-
-    /**
-     * 获取 Job 的文件树
-     */
-    public List<FileNodeDTO> getFileTree(Long jobId) {
-        GenerationJob job = generationJobRepository.findById(jobId)
-                .orElseThrow(() -> new RuntimeException("Job not found: " + jobId));
-
-        Path jobPath = Paths.get(outputDir, "job-" + jobId);
-
-        if (!Files.exists(jobPath)) {
-            log.warn("Job directory does not exist: {}", jobPath);
-            return new ArrayList<>();
-        }
-
-        try {
-            return buildFileTree(jobPath, jobPath.toString());
-        } catch (IOException e) {
-            log.error("Failed to build file tree for job {}", jobId, e);
-            throw new RuntimeException("Failed to build file tree", e);
-        }
-    }
-
-    /**
-     * 获取文件内容
-     */
-    public String getFileContent(Long jobId, String filePath) {
-        GenerationJob job = generationJobRepository.findById(jobId)
-                .orElseThrow(() -> new RuntimeException("Job not found: " + jobId));
-
-        // 安全检查：确保文件路径在 Job 目录内
-        Path jobPath = Paths.get(outputDir, "job-" + jobId).normalize();
-        Path targetPath = Paths.get(outputDir, "job-" + jobId, filePath).normalize();
-
-        if (!targetPath.startsWith(jobPath)) {
-            throw new RuntimeException("Invalid file path");
-        }
-
-        if (!Files.exists(targetPath) || Files.isDirectory(targetPath)) {
-            throw new RuntimeException("File not found: " + filePath);
-        }
-
-        try {
-            return Files.readString(targetPath);
-        } catch (IOException e) {
-            log.error("Failed to read file: {}", targetPath, e);
-            throw new RuntimeException("Failed to read file", e);
-        }
-    }
 
     /**
      * 获取 Conversation 的文件树
      */
     public List<FileNodeDTO> getConversationFileTree(Long conversationId) {
-        Path rootPath = resolveConversationRoot(conversationId);
+        Path rootPath = resolveConversationRootIfReady(conversationId);
+
+        if (rootPath == null) {
+            return new ArrayList<>();
+        }
 
         if (!Files.exists(rootPath)) {
             log.warn("Conversation directory does not exist: {}", rootPath);
@@ -173,22 +121,7 @@ public class FileService {
         }
 
         // 目录：递归处理子节点
-        List<FileNodeDTO> children = new ArrayList<>();
-        try (var stream = Files.list(path)) {
-            children = stream
-                    .sorted((p1, p2) -> {
-                        // 目录优先
-                        boolean p1Dir = Files.isDirectory(p1);
-                        boolean p2Dir = Files.isDirectory(p2);
-                        if (p1Dir != p2Dir) {
-                            return p1Dir ? -1 : 1;
-                        }
-                        // 同类型按名称排序
-                        return p1.getFileName().toString().compareTo(p2.getFileName().toString());
-                    })
-                    .map(p -> createFileNode(p, basePath))
-                    .collect(Collectors.toList());
-        }
+        List<FileNodeDTO> children = listDirectoryChildren(path, basePath);
 
         FileNodeDTO directoryNode = new FileNodeDTO();
         directoryNode.setName(path.getFileName().toString());
@@ -211,16 +144,45 @@ public class FileService {
         String relativePath = path.toString().substring(basePath.length() + 1);
         node.setPath(relativePath);
         
-        node.setDirectory(Files.isDirectory(path));
+        boolean isDirectory = Files.isDirectory(path);
+        node.setDirectory(isDirectory);
         node.setType(getFileType(path));
+        if (isDirectory) {
+            node.setChildren(listDirectoryChildren(path, basePath));
+        }
         
         try {
-            node.setSize(Files.isDirectory(path) ? 0L : Files.size(path));
+            node.setSize(isDirectory ? 0L : Files.size(path));
         } catch (IOException e) {
             node.setSize(0L);
         }
         
         return node;
+    }
+
+    private List<FileNodeDTO> listDirectoryChildren(Path path, String basePath) {
+        if (!Files.isDirectory(path)) {
+            return new ArrayList<>();
+        }
+
+        try (var stream = Files.list(path)) {
+            return stream
+                    .sorted((p1, p2) -> {
+                        // 目录优先
+                        boolean p1Dir = Files.isDirectory(p1);
+                        boolean p2Dir = Files.isDirectory(p2);
+                        if (p1Dir != p2Dir) {
+                            return p1Dir ? -1 : 1;
+                        }
+                        // 同类型按名称排序
+                        return p1.getFileName().toString().compareTo(p2.getFileName().toString());
+                    })
+                    .map(p -> createFileNode(p, basePath))
+                    .collect(Collectors.toList());
+        } catch (IOException e) {
+            log.warn("Failed to list directory children for {}", path, e);
+            return new ArrayList<>();
+        }
     }
 
     /**
@@ -260,10 +222,21 @@ public class FileService {
     }
 
     private Path resolveConversationRoot(Long conversationId) {
+        return resolveConversationRoot(conversationId, false);
+    }
+
+    private Path resolveConversationRootIfReady(Long conversationId) {
+        return resolveConversationRoot(conversationId, true);
+    }
+
+    private Path resolveConversationRoot(Long conversationId, boolean allowNotReady) {
         Conversation conversation = conversationRepository.findById(conversationId)
                 .orElseThrow(() -> new RuntimeException("Conversation not found: " + conversationId));
         String rootPath = conversation.getGeneratedCodePath();
         if (rootPath == null || rootPath.isBlank()) {
+            if (allowNotReady) {
+                return null;
+            }
             throw new RuntimeException("Conversation generated code path is not ready");
         }
         return Paths.get(rootPath).toAbsolutePath().normalize();

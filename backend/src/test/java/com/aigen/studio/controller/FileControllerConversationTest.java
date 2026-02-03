@@ -17,6 +17,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 
+import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -64,6 +65,32 @@ class FileControllerConversationTest {
         mockMvc.perform(get("/files/conversation/{id}/tree", conversation.getId()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].children[0].name", is("a.txt")));
+    }
+
+    @Test
+    void getsConversationFileTreeWithNestedDirectory(@TempDir Path tmp) throws Exception {
+        Path srcDir = Files.createDirectories(tmp.resolve("src"));
+        Files.writeString(srcDir.resolve("main.txt"), "nested");
+        Conversation conversation = createConversation(tmp);
+
+        mockMvc.perform(get("/files/conversation/{id}/tree", conversation.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].children[0].name", is("src")))
+                .andExpect(jsonPath("$[0].children[0].children[0].name", is("main.txt")));
+    }
+
+    @Test
+    void getsConversationFileTreeWhenPathNotReady() throws Exception {
+        Conversation conversation = new Conversation();
+        conversation.setProjectName("Test Project");
+        conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+        conversation.setStage(ConversationStage.SERVICE_STARTING);
+        conversation.setGeneratedCodePath(null);
+        conversation = conversationRepository.save(conversation);
+
+        mockMvc.perform(get("/files/conversation/{id}/tree", conversation.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(0)));
     }
 
     @Test

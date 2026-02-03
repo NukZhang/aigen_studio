@@ -16,11 +16,9 @@ import java.util.List;
 @AllArgsConstructor
 public class ConversationDTO {
     private Long id;                    // 对话 ID
-    private String projectId;           // 项目 ID（可选，来自 Job.jobCode）
     private String projectName;         // 项目名称
     private String status;              // 对话状态（ACTIVE, COMPLETED, CANCELLED, FAILED）
     private String stage;               // 对话阶段（NEED_INPUT, UNDERSTANDING, UNDERSTANDING_CONFIRMED, CODE_GENERATING, SERVICE_STARTING, PREVIEWING, COMPLETED, FAILED）
-    private Long jobId;                 // 关联的作业 ID（可选）
     private String userRequirement;     // 用户输入的需求描述
     private String aiUnderstanding;     // AI 理解的需求
     private Boolean understandingConfirmed;  // 用户是否确认理解内容
@@ -31,5 +29,4 @@ public class ConversationDTO {
     private LocalDateTime createdAt;    // 创建时间
     private LocalDateTime updatedAt;    // 更新时间
     private List<MessageDTO> messages;  // 消息列表
-    private List<TodoItemDTO> todos;    // 待办事项列表
 }

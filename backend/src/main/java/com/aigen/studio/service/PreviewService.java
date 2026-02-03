@@ -22,6 +22,7 @@ public class PreviewService {
     private final PreviewConfigResolver previewConfigResolver;
     private final ConversationRepository conversationRepository;
     private final ProcessLauncher processLauncher;
+    private final PreviewScriptService previewScriptService;
 
     private final Object lock = new Object();
     private PreviewSession activeSession;
@@ -110,9 +111,10 @@ public class PreviewService {
     }
 
     private Process startFrontend(Path frontendDir, int port) {
-        List<String> command = List.of(
-                "npm", "run", "dev", "--", "--port", String.valueOf(port), "--strictPort"
-        );
+        Path scriptPath = previewScriptService.ensureFrontendStartScript(frontendDir);
+        previewScriptService.ensureFrontendRouterBase(frontendDir);
+        ensureFrontendDependencies(frontendDir);
+        List<String> command = buildFrontendCommand(scriptPath, port);
         return startProcess(frontendDir, command);
     }
 
@@ -121,6 +123,17 @@ public class PreviewService {
                 "mvn", "spring-boot:run", "-Dserver.port=" + port
         );
         return startProcess(backendDir, command);
+    }
+
+    private List<String> buildFrontendCommand(Path scriptPath, int port) {
+        if (scriptPath != null && Files.exists(scriptPath)) {
+            return List.of(
+                    "sh", "scripts/start-preview.sh", String.valueOf(port), "/__preview__/"
+            );
+        }
+        return List.of(
+                "npm", "run", "dev", "--", "--port", String.valueOf(port), "--strictPort", "--base", "/__preview__/"
+        );
     }
 
     private Process startProcess(Path workingDir, List<String> command) {
@@ -133,6 +146,31 @@ public class PreviewService {
             throw new RuntimeException("Failed to start preview process", e);
         }
     }
+
+    private void ensureFrontendDependencies(Path frontendDir) {
+        Path packageJson = frontendDir.resolve("package.json");
+        Path nodeModules = frontendDir.resolve("node_modules");
+        if (!Files.exists(packageJson) || Files.isDirectory(nodeModules)) {
+            return;
+        }
+
+        log.info("Installing frontend dependencies in {}", frontendDir);
+        Process process = startProcess(frontendDir, List.of("npm", "install"));
+        waitForProcess(process, "npm install");
+    }
+
+    private void waitForProcess(Process process, String action) {
+        try {
+            int exitCode = process.waitFor();
+            if (exitCode != 0) {
+                throw new RuntimeException(action + " failed with exit code " + exitCode);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException(action + " interrupted", e);
+        }
+    }
+
 
     private PreviewStatusDTO buildStatus(Long conversationId, PreviewConfig config, Process frontend, Process backend, String message) {
         boolean frontendRunning = isAlive(frontend);

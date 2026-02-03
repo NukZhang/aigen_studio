@@ -11,7 +11,7 @@ import java.util.Properties;
 @Service
 public class PreviewConfigResolver {
 
-    private static final int DEFAULT_FRONTEND_PORT = 3001;
+    private static final int DEFAULT_FRONTEND_PORT = 3002;
     private static final int DEFAULT_BACKEND_PORT = 8081;
     private static final int RESERVED_FRONTEND_PORT = 3000;
     private static final int RESERVED_BACKEND_PORT = 8080;

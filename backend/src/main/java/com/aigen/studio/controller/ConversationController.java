@@ -1,8 +1,9 @@
 package com.aigen.studio.controller;
 
-import com.aigen.studio.dto.*;
+import com.aigen.studio.dto.ConfirmUnderstandingRequest;
+import com.aigen.studio.dto.ConversationDTO;
+import com.aigen.studio.dto.MessageDTO;
 import com.aigen.studio.service.ConversationService;
-import com.aigen.studio.service.TodoService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -18,47 +19,6 @@ import java.util.List;
 public class ConversationController {
 
     private final ConversationService conversationService;
-    private final TodoService todoService;
-
-    // ==================== 基于 Job 的对话（原有功能） ====================
-
-    @PostMapping
-    public ResponseEntity<ConversationDTO> createConversation(@RequestParam Long jobId) {
-        log.info("Creating conversation for job: {}", jobId);
-        ConversationDTO conversation = conversationService.createConversation(jobId);
-        return ResponseEntity.status(HttpStatus.CREATED).body(conversation);
-    }
-
-    @GetMapping("/job/{jobId}")
-    public ResponseEntity<ConversationDTO> getConversationByJobId(@PathVariable Long jobId) {
-        ConversationDTO conversation = conversationService.getConversationByJobId(jobId);
-        return ResponseEntity.ok(conversation);
-    }
-
-    @PostMapping("/{id}/messages")
-    public ResponseEntity<MessageDTO> sendMessage(
-            @PathVariable Long id,
-            @RequestBody MessageDTO message) {
-        log.info("Sending message to conversation {}: {}", id, message.getContent());
-        MessageDTO response = conversationService.sendMessage(id, message);
-        return ResponseEntity.ok(response);
-    }
-
-    @GetMapping("/job/{jobId}/todos")
-    public ResponseEntity<List<TodoItemDTO>> getTodosByJobId(@PathVariable Long jobId) {
-        List<TodoItemDTO> todos = todoService.getTodosByJobId(jobId);
-        return ResponseEntity.ok(todos);
-    }
-
-    @PutMapping("/job/{jobId}/todos/{todoId}")
-    public ResponseEntity<TodoItemDTO> updateTodoStatus(
-            @PathVariable Long jobId,
-            @PathVariable Long todoId,
-            @RequestParam String status) {
-        log.info("Updating todo {} status to {} for job {}", todoId, status, jobId);
-        TodoItemDTO todo = todoService.updateTodoStatusByJob(jobId, todoId, status);
-        return ResponseEntity.ok(todo);
-    }
 
     // ==================== 独立对话流程（新功能） ====================
 

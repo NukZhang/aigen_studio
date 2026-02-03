@@ -14,12 +14,20 @@ import static org.junit.jupiter.api.Assertions.fail;
 class PreviewConfigResolverTest {
 
     @Test
+    void usesDefaultPortsWhenConfigMissing(@TempDir Path tmp) throws Exception {
+        Object config = resolveConfig(tmp);
+
+        assertEquals(3002, readPort(config, "frontendPort"));
+        assertEquals(8081, readPort(config, "backendPort"));
+    }
+
+    @Test
     void readsPortsFromApplicationYaml(@TempDir Path tmp) throws Exception {
-        Files.writeString(tmp.resolve("application.yml"), "preview:\n  frontendPort: 3001\n  backendPort: 8081\n");
+        Files.writeString(tmp.resolve("application.yml"), "preview:\n  frontendPort: 3002\n  backendPort: 8081\n");
 
         Object config = resolveConfig(tmp);
 
-        assertEquals(3001, readPort(config, "frontendPort"));
+        assertEquals(3002, readPort(config, "frontendPort"));
         assertEquals(8081, readPort(config, "backendPort"));
     }
 

@@ -63,8 +63,9 @@ class PreviewServiceTest {
     @Test
     void startPreviewStartsExistingServicesAndUpdatesConversation(@TempDir Path tmp) throws Exception {
         Files.createDirectories(tmp.resolve("frontend"));
+        Files.createDirectories(tmp.resolve("frontend/node_modules"));
         Files.createDirectories(tmp.resolve("backend"));
-        Files.writeString(tmp.resolve("application.yml"), "preview:\n  frontendPort: 3001\n  backendPort: 8081\n");
+        Files.writeString(tmp.resolve("application.yml"), "preview:\n  frontendPort: 3002\n  backendPort: 8081\n");
 
         Conversation conversation = createConversation(tmp);
 
@@ -73,20 +74,23 @@ class PreviewServiceTest {
         assertTrue(status.isRunning());
         assertTrue(status.isFrontendRunning());
         assertTrue(status.isBackendRunning());
-        assertEquals(3001, status.getFrontendPort());
+        assertEquals(3002, status.getFrontendPort());
         assertEquals(8081, status.getBackendPort());
-        assertEquals("http://localhost:3001", status.getFrontendUrl());
+        assertEquals("http://localhost:3002", status.getFrontendUrl());
         assertEquals("http://localhost:8081", status.getBackendUrl());
         assertEquals(2, processLauncher.startedBuilders.size());
+        assertEquals(List.of("sh", "scripts/start-preview.sh", "3002", "/__preview__/"),
+                processLauncher.startedBuilders.get(0).command());
 
         Conversation updated = conversationRepository.findById(conversation.getId()).orElseThrow();
         assertEquals(ConversationStage.PREVIEWING, updated.getStage());
-        assertEquals("http://localhost:3001", updated.getPreviewUrl());
+        assertEquals("http://localhost:3002", updated.getPreviewUrl());
     }
 
     @Test
     void startPreviewSkipsMissingBackend(@TempDir Path tmp) throws Exception {
         Files.createDirectories(tmp.resolve("frontend"));
+        Files.createDirectories(tmp.resolve("frontend/node_modules"));
         Files.writeString(tmp.resolve("application.yml"), "preview:\n  frontendPort: 3002\n  backendPort: 8082\n");
 
         Conversation conversation = createConversation(tmp);
@@ -97,6 +101,25 @@ class PreviewServiceTest {
         assertTrue(status.isFrontendRunning());
         assertFalse(status.isBackendRunning());
         assertEquals(1, processLauncher.startedBuilders.size());
+        assertEquals(List.of("sh", "scripts/start-preview.sh", "3002", "/__preview__/"),
+                processLauncher.startedBuilders.get(0).command());
+    }
+
+    @Test
+    void startPreviewInstallsFrontendDependenciesWhenMissing(@TempDir Path tmp) throws Exception {
+        Path frontendDir = Files.createDirectories(tmp.resolve("frontend"));
+        Files.writeString(frontendDir.resolve("package.json"), "{}");
+
+        Conversation conversation = createConversation(tmp);
+
+        PreviewStatusDTO status = previewService.startPreview(conversation.getId());
+
+        assertTrue(status.isRunning());
+        assertEquals(2, processLauncher.startedBuilders.size());
+        assertEquals(List.of("npm", "install"), processLauncher.startedBuilders.get(0).command());
+        assertEquals(List.of(
+                "sh", "scripts/start-preview.sh", String.valueOf(status.getFrontendPort()), "/__preview__/"
+        ), processLauncher.startedBuilders.get(1).command());
     }
 
     @Test

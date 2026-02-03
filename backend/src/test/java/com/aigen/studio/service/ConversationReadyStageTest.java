@@ -7,9 +7,12 @@ import com.aigen.studio.entity.Message;
 import com.aigen.studio.repository.ConversationRepository;
 import com.aigen.studio.repository.MessageRepository;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 
@@ -28,6 +31,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
         "spring.jpa.hibernate.ddl-auto=create-drop"
 })
 class ConversationReadyStageTest {
+
+    @TempDir
+    static Path outputDir;
 
     @Autowired
     private ConversationService conversationService;
@@ -57,6 +63,11 @@ class ConversationReadyStageTest {
         }
     }
 
+    @DynamicPropertySource
+    static void registerProperties(DynamicPropertyRegistry registry) {
+        registry.add("iflow.sdk.output-dir", () -> outputDir.toString());
+    }
+
     @Test
     void confirmUnderstandingMarksReadyToStartAndSendsMessage() {
         Conversation conversation = new Conversation();
@@ -75,5 +86,22 @@ class ConversationReadyStageTest {
 
         List<Message> messages = messageRepository.findByConversationIdOrderByCreatedAtAsc(conversation.getId());
         assertTrue(messages.stream().anyMatch(msg -> msg.getContent().contains("代码生成完成，请确认启动服务")));
+    }
+
+    @Test
+    void confirmUnderstandingUsesConfiguredOutputDir() {
+        Conversation conversation = new Conversation();
+        conversation.setProjectName("Test");
+        conversation.setUserRequirement("Generate a demo app");
+        conversation.setAiUnderstanding("Understood requirements");
+        conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+        conversation.setStage(ConversationStage.UNDERSTANDING_CONFIRMED);
+        conversation.setUnderstandingConfirmed(false);
+        conversation = conversationRepository.save(conversation);
+
+        conversationService.confirmUnderstanding(conversation.getId(), new ConfirmUnderstandingRequest(true, null));
+
+        Conversation updated = conversationRepository.findById(conversation.getId()).orElseThrow();
+        assertTrue(updated.getGeneratedCodePath().startsWith(outputDir.toString()));
     }
 }

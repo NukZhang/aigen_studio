@@ -18,10 +18,8 @@ cd backend
 
 2. 配置环境变量
 ```bash
-export IFLOW_API_KEY=your-api-key-here
-export GITLAB_URL=https://gitlab.com
-export GITLAB_TOKEN=your-gitlab-token
-export GITLAB_PROJECT_ID=your-project-id
+export IFLOW_API_KEY=sk-53b6922f314b9738c8083aabb2f7ceda
+export IFLOW_OUTPUT_DIR=/opt/aigen-studio/generated-code
 ```
 
 3. 编译项目
@@ -105,9 +103,7 @@ ExecStart=/usr/bin/java -jar /opt/aigen-studio/backend/aigen-studio-backend-1.0.
 Restart=always
 RestartSec=10
 Environment=IFLOW_API_KEY=your-api-key
-Environment=GITLAB_URL=https://gitlab.com
-Environment=GITLAB_TOKEN=your-token
-Environment=GITLAB_PROJECT_ID=your-project-id
+Environment=IFLOW_OUTPUT_DIR=/opt/aigen-studio/generated-code
 
 [Install]
 WantedBy=multi-user.target
@@ -208,9 +204,7 @@ services:
     environment:
       - SPRING_PROFILES_ACTIVE=prod
       - IFLOW_API_KEY=${IFLOW_API_KEY}
-      - GITLAB_URL=${GITLAB_URL}
-      - GITLAB_TOKEN=${GITLAB_TOKEN}
-      - GITLAB_PROJECT_ID=${GITLAB_PROJECT_ID}
+      - IFLOW_OUTPUT_DIR=${IFLOW_OUTPUT_DIR}
     restart: unless-stopped
 
   frontend:
@@ -261,15 +255,13 @@ spring:
 ### 必需变量
 
 - `IFLOW_API_KEY`: iFlow SDK API 密钥
-- `GITLAB_URL`: GitLab 服务器地址
-- `GITLAB_TOKEN`: GitLab 访问令牌
-- `GITLAB_PROJECT_ID`: GitLab 项目 ID
 
 ### 可选变量
 
 - `SPRING_PROFILES_ACTIVE`: Spring 配置文件（dev/prod）
 - `SERVER_PORT`: 服务端口（默认 8080）
 - `LOG_LEVEL`: 日志级别（DEBUG/INFO/WARN/ERROR）
+- `IFLOW_OUTPUT_DIR`: 代码生成输出目录
 
 ## 监控和日志
 
