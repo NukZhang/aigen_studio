@@ -7,7 +7,7 @@
       </div>
 
       <!-- 历史对话列表抽屉 -->
-      <el-drawer v-model="showConversationList" title="历史对话" size="300px">
+      <el-drawer v-model="showConversationList" title="历史对话" size="300px" direction="ltr">
         <div class="conversation-list">
           <div v-if="conversationList.length === 0" class="empty-list">
             <el-icon size="48"><ChatDotRound /></el-icon>
@@ -1559,11 +1559,55 @@ onUnmounted(() => {
   height: 100%;
   display: flex;
   flex-direction: column;
+  background-color: #1a1a1a;
+  border: 1px solid #3a3a3a;
+  border-radius: 8px;
+}
+
+/* 标签页头部黑色系 */
+.panel-header :deep(.el-tabs__header) {
+  background-color: #2a2a2a;
+  border-bottom: 1px solid #3a3a3a;
+  margin: 0;
+  border-radius: 8px 8px 0 0;
+}
+
+.panel-header :deep(.el-tabs__nav) {
+  border: none;
+}
+
+.panel-header :deep(.el-tabs__item) {
+  color: #888;
+  background-color: #2a2a2a;
+  border: 1px solid transparent;
+  border-bottom: none;
+  padding: 0 20px;
+  height: 40px;
+  line-height: 40px;
+  transition: all 0.3s;
+}
+
+.panel-header :deep(.el-tabs__item:hover) {
+  color: #e0e0e0;
+  background-color: #333333;
+}
+
+.panel-header :deep(.el-tabs__item.is-active) {
+  color: #667eea;
+  background-color: #1a1a1a;
+  border-bottom: 2px solid #667eea;
+}
+
+.panel-header :deep(.el-tabs__active-bar) {
+  background-color: #667eea;
+  height: 2px;
 }
 
 .panel-header :deep(.el-tabs__content) {
   flex: 1;
   overflow: hidden;
+  background-color: #1a1a1a;
+  border-radius: 0 0 8px 8px;
 }
 
 .panel-header :deep(.el-tab-pane) {
@@ -1910,6 +1954,42 @@ onUnmounted(() => {
   padding: 12px;
 }
 
+/* 抽屉黑色系样式 */
+.workspace :deep(.el-drawer) {
+  background-color: #1a1a1a !important;
+  border-right: 1px solid #3a3a3a !important;
+}
+
+.workspace :deep(.el-drawer__header) {
+  background-color: #2a2a2a !important;
+  border-bottom: 1px solid #3a3a3a !important;
+  padding: 16px 20px !important;
+  margin-bottom: 0 !important;
+}
+
+.workspace :deep(.el-drawer__title) {
+  color: #e0e0e0 !important;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.workspace :deep(.el-drawer__close-btn) {
+  color: #b0b0b0 !important;
+}
+
+.workspace :deep(.el-drawer__close-btn:hover) {
+  color: #ffffff !important;
+}
+
+.workspace :deep(.el-drawer__body) {
+  background-color: #1a1a1a !important;
+  padding: 0 !important;
+}
+
+.workspace :deep(.el-overlay) {
+  background-color: rgba(0, 0, 0, 0.7) !important;
+}
+
 .empty-list {
   display: flex;
   flex-direction: column;
@@ -1921,6 +2001,7 @@ onUnmounted(() => {
 
 .empty-list .el-icon {
   margin-bottom: 12px;
+  color: #444;
 }
 
 .conversation-item {

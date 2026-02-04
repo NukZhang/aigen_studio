@@ -227,7 +227,7 @@ public class IFlowClientHelper implements ICodingService {
 
             @Override
             public void onToolResultMessage(ToolResultMessage message) {
-                handler.onToolResult(message.getContent().toString());
+                handler.onToolResult(formatToolResultContent(message));
             }
 
             @Override
@@ -250,6 +250,13 @@ public class IFlowClientHelper implements ICodingService {
         IFlowClient client = createClient(workDir);
         executeTask(client, prompt, flowHandler);
         client.close();
+    }
+
+    String formatToolResultContent(ToolResultMessage message) {
+        if (message == null || message.getContent() == null) {
+            return "";
+        }
+        return message.getContent().toString();
     }
 
     /**

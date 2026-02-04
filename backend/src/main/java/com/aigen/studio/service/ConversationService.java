@@ -4,8 +4,6 @@ import com.aigen.studio.dto.*;
 import com.aigen.studio.entity.*;
 import com.aigen.studio.repository.ConversationRepository;
 import com.aigen.studio.repository.MessageRepository;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.scheduling.annotation.Async;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -13,9 +11,6 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 
 /**
  * 对话服务
@@ -29,10 +24,7 @@ public class ConversationService {
     private final ConversationRepository conversationRepository;
     private final MessageRepository messageRepository;
     private final PromptTaskService promptTaskService;
-    private final PreviewScriptService previewScriptService;
-
-    @Value("${iflow.sdk.output-dir:./output}")
-    private String outputDir;
+    private final CodeGenerationService codeGenerationService;
 
     // ==================== 独立对话流程方法 ====================
 
@@ -94,8 +86,9 @@ public class ConversationService {
 
             log.info("User confirmed understanding for conversation: {}, moving to CODE_GENERATING", conversationId);
 
+            codeGenerationService.sendProgressMessage(conversationId, "开始生成代码...", "system");
             // 异步调用 iFlow SDK 生成代码
-            generateCodeForConversationAsync(conversationId);
+            codeGenerationService.generateCodeForConversationAsync(conversationId);
 
         } else {
             // 用户不确认，返回到理解阶段
@@ -109,128 +102,6 @@ public class ConversationService {
         return convertToDTO(conversation);
     }
 
-    /**
-     * 为对话生成代码（异步执行）
-     */
-    @Async
-    private void generateCodeForConversationAsync(Long conversationId) {
-        try {
-            Conversation conversation = conversationRepository.findById(conversationId)
-                    .orElseThrow(() -> new RuntimeException("Conversation not found: " + conversationId));
-
-            log.info("Starting code generation for conversation: {}", conversationId);
-
-            // 发送开始生成代码的进度消息
-            sendProgressMessage(conversationId, "开始生成代码...", "system");
-
-            // 创建输出目录
-            Path outputPath = Paths.get(outputDir, "conversation-" + conversationId);
-            Files.createDirectories(outputPath);
-
-            conversation.setGeneratedCodePath(outputPath.toString());
-            conversationRepository.save(conversation);
-
-            // 发送正在生成代码的进度消息
-            sendProgressMessage(conversationId, "正在调用 iFlow SDK 生成代码，请稍候...", "system");
-
-            // 生成 IR 内容（简化版本）
-            String irContent = generateIRContent(conversation);
-
-            // 使用 PromptTaskService 生成代码
-            promptTaskService.generateCode(irContent, outputPath, message -> {
-                log.info("Code generation log: {}", message);
-                // 保存进度消息到消息表
-                sendProgressMessage(conversationId, message, "system");
-            });
-
-            ensurePreviewScripts(outputPath);
-
-            // 更新对话状态
-            conversation.setStage(ConversationStage.READY_TO_START);
-            conversation.setServiceStatus("CODE_GENERATED");
-            conversationRepository.save(conversation);
-
-            // 发送代码生成完成的进度消息
-            sendProgressMessage(conversationId, "代码生成完成，请确认启动服务", "system");
-
-            log.info("Code generation completed for conversation: {}", conversationId);
-
-            // TODO: 启动服务
-            // startGeneratedService(conversation);
-
-        } catch (Exception e) {
-            log.error("Code generation failed for conversation: {}", conversationId, e);
-            Conversation conversation = conversationRepository.findById(conversationId).orElse(null);
-            if (conversation != null) {
-                conversation.setStage(ConversationStage.FAILED);
-                conversation.setStatus(Conversation.ConversationStatus.FAILED);
-                conversation.setErrorMessage("代码生成失败: " + e.getMessage());
-                conversationRepository.save(conversation);
-                
-                // 发送失败消息
-                sendProgressMessage(conversationId, "代码生成失败: " + e.getMessage(), "system");
-            }
-        }
-    }
-
-    /**
-     * 发送进度消息到对话
-     */
-    private void sendProgressMessage(Long conversationId, String content, String role) {
-        try {
-            Conversation conversation = conversationRepository.findById(conversationId).orElse(null);
-            if (conversation == null) return;
-
-            Message message = new Message();
-            message.setConversationId(conversationId);
-            message.setRole(Message.MessageRole.valueOf(role.toUpperCase()));
-            message.setSenderName("系统");
-            message.setContent(content);
-            messageRepository.save(message);
-
-            log.info("Sent progress message for conversation {}: {}", conversationId, content);
-        } catch (Exception e) {
-            log.error("Failed to send progress message for conversation {}", conversationId, e);
-        }
-    }
-
-    private void ensurePreviewScripts(Path outputPath) {
-        Path frontendDir = outputPath.resolve("frontend");
-        if (!Files.isDirectory(frontendDir)) {
-            return;
-        }
-        previewScriptService.ensureFrontendStartScript(frontendDir);
-        previewScriptService.ensureFrontendRouterBase(frontendDir);
-    }
-
-    /**
-     * 生成 IR 内容（简化版本）
-     */
-    private String generateIRContent(Conversation conversation) {
-        return String.format("""
-            {
-              "projectName": "%s",
-              "userRequirement": "%s",
-              "aiUnderstanding": "%s",
-              "modules": [
-                {
-                  "name": "frontend",
-                  "type": "vue3",
-                  "features": []
-                },
-                {
-                  "name": "backend",
-                  "type": "springboot",
-                  "features": []
-                }
-              ]
-            }
-            """,
-            conversation.getProjectName(),
-            conversation.getUserRequirement().replace("\n", " "),
-            conversation.getAiUnderstanding().replace("\n", " ")
-        );
-    }
 
     /**
      * 发送消息到独立对话

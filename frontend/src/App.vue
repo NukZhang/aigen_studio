@@ -6,17 +6,6 @@
         <div class="sidebar-header">
           <div class="logo">AI</div>
           <div class="sidebar-actions">
-            <el-tooltip content="历史对话" placement="right">
-              <button
-                class="sidebar-action"
-                type="button"
-                data-action="history"
-                aria-label="历史对话"
-                @click="triggerSidebarAction('history')"
-              >
-                <el-icon><List /></el-icon>
-              </button>
-            </el-tooltip>
             <el-tooltip content="新建对话" placement="right">
               <button
                 class="sidebar-action sidebar-action-primary"
@@ -26,6 +15,17 @@
                 @click="triggerSidebarAction('new')"
               >
                 <el-icon><Plus /></el-icon>
+              </button>
+            </el-tooltip>
+            <el-tooltip content="历史对话" placement="right">
+              <button
+                class="sidebar-action"
+                type="button"
+                data-action="history"
+                aria-label="历史对话"
+                @click="triggerSidebarAction('history')"
+              >
+                <el-icon><List /></el-icon>
               </button>
             </el-tooltip>
           </div>
