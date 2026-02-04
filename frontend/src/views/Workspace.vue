@@ -2031,19 +2031,20 @@ onUnmounted(() => {
   opacity: 0.7;
 }
 
-/* 下拉菜单深色主题 */
+/* 下拉菜单深色主题 - 使用更高优先级 */
 .chat-input :deep(.el-dropdown-menu) {
-  background-color: #2a2a2a;
-  border-color: #3a3a3a;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  background-color: #2a2a2a !important;
+  border-color: #3a3a3a !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
 }
 
 .chat-input :deep(.el-dropdown-menu__item) {
-  color: #e0e0e0;
-  padding: 10px 16px;
-  font-size: 14px;
-  transition: background-color 0.2s;
+  color: #e0e0e0 !important;
+  padding: 10px 16px !important;
+  font-size: 14px !important;
+  transition: background-color 0.2s !important;
+  background-color: transparent !important;
 }
 
 .chat-input :deep(.el-dropdown-menu__item:hover) {
@@ -2052,23 +2053,24 @@ onUnmounted(() => {
 
 .chat-input :deep(.el-dropdown-menu__item.is-active) {
   background-color: rgba(255, 255, 255, 0.1) !important;
-  color: #e0e0e0;
-  border-left: 2px solid #667eea;
+  color: #e0e0e0 !important;
+  border-left: 2px solid #667eea !important;
 }
 
-/* 通用下拉菜单深色主题 */
+/* 通用下拉菜单深色主题 - 使用更高优先级 */
 :deep(.el-dropdown-menu) {
-  background-color: #2a2a2a;
-  border-color: #3a3a3a;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  background-color: #2a2a2a !important;
+  border-color: #3a3a3a !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
 }
 
 :deep(.el-dropdown-menu__item) {
-  color: #e0e0e0;
-  padding: 10px 16px;
-  font-size: 14px;
-  transition: background-color 0.2s;
+  color: #e0e0e0 !important;
+  padding: 10px 16px !important;
+  font-size: 14px !important;
+  transition: background-color 0.2s !important;
+  background-color: transparent !important;
 }
 
 :deep(.el-dropdown-menu__item:hover) {
@@ -2077,6 +2079,6 @@ onUnmounted(() => {
 
 :deep(.el-dropdown-menu__item.is-active) {
   background-color: rgba(255, 255, 255, 0.1) !important;
-  color: #e0e0e0;
+  color: #e0e0e0 !important;
 }
 </style>
