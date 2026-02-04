@@ -2031,12 +2031,25 @@ onUnmounted(() => {
   opacity: 0.7;
 }
 
-/* 下拉菜单深色主题 - 使用更高优先级 */
+/* 下拉菜单深色主题 - 使用最高优先级 */
 .chat-input :deep(.el-dropdown-menu) {
   background-color: #2a2a2a !important;
   border-color: #3a3a3a !important;
   border-radius: 8px !important;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
+}
+
+/* 强制覆盖Element Plus弹出层容器的背景色 */
+:deep(.el-popper) {
+  background-color: #2a2a2a !important;
+  border-color: #3a3a3a !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
+}
+
+:deep(.el-popper .el-popper__arrow) {
+  --el-popper-border-color: #3a3a3a !important;
+  --el-popper-bg-color: #2a2a2a !important;
 }
 
 .chat-input :deep(.el-dropdown-menu__item) {
@@ -2057,7 +2070,7 @@ onUnmounted(() => {
   border-left: 2px solid #667eea !important;
 }
 
-/* 通用下拉菜单深色主题 - 使用更高优先级 */
+/* 通用下拉菜单深色主题 - 使用最高优先级 */
 :deep(.el-dropdown-menu) {
   background-color: #2a2a2a !important;
   border-color: #3a3a3a !important;
