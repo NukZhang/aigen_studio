@@ -169,7 +169,7 @@
 
           <div class="input-footer">
             <div class="input-footer-left">
-              <el-dropdown trigger="click" @command="handleModelChange" v-if="availableModels.length > 0 && selectedModel">
+              <el-dropdown trigger="click" @command="handleModelChange" v-if="availableModels.length > 0 && selectedModel" popper-class="model-dropdown-popper">
                 <div class="model-selector">
                   <div class="model-icon">
                     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -2093,5 +2093,40 @@ onUnmounted(() => {
 :deep(.el-dropdown-menu__item.is-active) {
   background-color: rgba(255, 255, 255, 0.1) !important;
   color: #e0e0e0 !important;
+}
+
+/* 模型选择下拉菜单自定义样式 - 确保深色系生效 */
+:global(.model-dropdown-popper) {
+  background-color: #2a2a2a !important;
+  border-color: #3a3a3a !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
+}
+
+:global(.model-dropdown-popper .el-dropdown-menu__item) {
+  color: #e0e0e0 !important;
+  padding: 10px 16px !important;
+  font-size: 14px !important;
+  background-color: transparent !important;
+}
+
+:global(.model-dropdown-popper .el-dropdown-menu__item:hover) {
+  background-color: #3a3a3a !important;
+}
+
+:global(.model-dropdown-popper .el-dropdown-menu__item.is-active) {
+  background-color: rgba(255, 255, 255, 0.1) !important;
+  color: #e0e0e0 !important;
+  border-left: 2px solid #667eea !important;
+}
+
+:global(.model-dropdown-popper .el-popper__arrow) {
+  --el-popper-border-color: #3a3a3a !important;
+  --el-popper-bg-color: #2a2a2a !important;
+}
+
+:global(.model-dropdown-popper .el-popper__arrow::before) {
+  background-color: #2a2a2a !important;
+  border-color: #3a3a3a !important;
 }
 </style>
