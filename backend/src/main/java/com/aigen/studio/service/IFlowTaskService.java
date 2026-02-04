@@ -134,6 +134,13 @@ public class IFlowTaskService {
             5. 生成 TypeScript SDK（如果需要）
             6. 确保所有代码都是完整的、可运行的
             7. 添加必要的配置文件和说明文档
+            8. 如果包含 frontend 模块，必须生成最小可运行的 Vite + Vue3 前端骨架：
+               - frontend/index.html（含 #app 且引用 /src/main.ts）
+               - frontend/src/main.ts（创建并挂载 App）
+               - frontend/src/App.vue（最小根组件即可）
+               - frontend/vite.config.(ts|js)（含 Vue 插件；路由需 createWebHistory(import.meta.env.BASE_URL)）
+               - frontend/package.json（含 dev/build/preview 脚本和依赖）
+            9. 若暂时没有业务页面，也必须生成上述入口文件，不要只创建目录或空 src。
 
             输出目录：%s
 
