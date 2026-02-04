@@ -109,4 +109,79 @@ describe('PreviewPanel url resolution', () => {
 
     wrapper.unmount()
   })
+
+  it('uses direct host with base path when preview proxy is disabled', async () => {
+    vi.stubEnv('VITE_PREVIEW_PROXY', 'false')
+    Object.defineProperty(window, 'location', {
+      value: new URL('http://dev-host:3000'),
+      configurable: true
+    })
+
+    apiMocks.getStatus.mockResolvedValueOnce({
+      data: {
+        conversationId: 1,
+        running: true,
+        frontendRunning: true,
+        backendRunning: false,
+        frontendPort: 3002,
+        backendPort: 8081,
+        frontendUrl: 'http://localhost:3002',
+        backendUrl: null
+      }
+    })
+
+    const wrapper = mount(PreviewPanel, {
+      props: { conversationId: 1 },
+      global: {
+        stubs: {
+          'el-button': { template: '<button><slot /></button>' },
+          'el-icon': { template: '<i><slot /></i>' }
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.find('.url').text()).toBe('http://dev-host:3002/__preview__/')
+
+    wrapper.unmount()
+  })
+
+  it('shows status message when preview is not running', async () => {
+    vi.stubEnv('VITE_PREVIEW_PROXY', 'true')
+    Object.defineProperty(window, 'location', {
+      value: new URL('http://dev-host:3000'),
+      configurable: true
+    })
+
+    apiMocks.getStatus.mockResolvedValueOnce({
+      data: {
+        conversationId: 1,
+        running: false,
+        frontendRunning: false,
+        backendRunning: false,
+        frontendPort: 3002,
+        backendPort: 8081,
+        frontendUrl: null,
+        backendUrl: null,
+        message: 'Frontend entry not found: index.html'
+      }
+    })
+
+    const wrapper = mount(PreviewPanel, {
+      props: { conversationId: 1 },
+      global: {
+        stubs: {
+          'el-button': { template: '<button><slot /></button>' },
+          'el-icon': { template: '<i><slot /></i>' }
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Frontend entry not found: index.html')
+
+    wrapper.unmount()
+  })
 })

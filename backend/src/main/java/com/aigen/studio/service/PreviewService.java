@@ -8,16 +8,22 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class PreviewService {
+
+    private static final String PREVIEW_BASE_PATH = "/__preview__/";
+    private static final String FRONTEND_ENTRY_MISSING_MESSAGE = "Frontend entry not found: index.html";
 
     private final PreviewConfigResolver previewConfigResolver;
     private final ConversationRepository conversationRepository;
@@ -43,23 +49,26 @@ public class PreviewService {
             }
 
             Process frontendProcess = null;
+            String frontendMessage = null;
             Process backendProcess = null;
 
             Path frontendDir = rootPath.resolve("frontend");
             if (Files.isDirectory(frontendDir)) {
-                frontendProcess = startFrontend(frontendDir, config.frontendPort());
+                FrontendStartResult frontendResult = startFrontend(frontendDir, config.frontendPort(), conversationId);
+                frontendProcess = frontendResult.process();
+                frontendMessage = frontendResult.message();
             }
 
             Path backendDir = rootPath.resolve("backend");
             if (Files.isDirectory(backendDir)) {
-                backendProcess = startBackend(backendDir, config.backendPort());
+                backendProcess = startBackend(backendDir, config.backendPort(), conversationId);
             }
 
             activeSession = new PreviewSession(conversationId, frontendProcess, backendProcess, config);
 
             updateConversationAfterStart(conversation, frontendProcess, backendProcess, config);
 
-            return buildStatus(conversationId, config, frontendProcess, backendProcess, null);
+            return buildStatus(conversationId, config, frontendProcess, backendProcess, frontendMessage);
         }
     }
 
@@ -110,41 +119,203 @@ public class PreviewService {
         }
     }
 
-    private Process startFrontend(Path frontendDir, int port) {
+    private FrontendStartResult startFrontend(Path frontendDir, int port, Long conversationId) {
+        if (!hasFrontendEntry(frontendDir)) {
+            log.warn("Frontend entry not found at {}", frontendDir.resolve("index.html"));
+            return new FrontendStartResult(null, FRONTEND_ENTRY_MISSING_MESSAGE);
+        }
         Path scriptPath = previewScriptService.ensureFrontendStartScript(frontendDir);
         previewScriptService.ensureFrontendRouterBase(frontendDir);
         ensureFrontendDependencies(frontendDir);
         List<String> command = buildFrontendCommand(scriptPath, port);
-        return startProcess(frontendDir, command);
+        Path logFile = getLogFile(conversationId, "frontend");
+        Process process = startProcess(frontendDir, command, conversationId, "Frontend", logFile);
+        return new FrontendStartResult(process, null);
     }
 
-    private Process startBackend(Path backendDir, int port) {
-        List<String> command = List.of(
-                "mvn", "spring-boot:run", "-Dserver.port=" + port
-        );
-        return startProcess(backendDir, command);
+    private Process startBackend(Path backendDir, int port, Long conversationId) {
+        // 尝试查找主类
+        String mainClass = findMainClass(backendDir);
+        
+        List<String> command;
+        if (mainClass != null && !mainClass.isEmpty()) {
+            command = List.of(
+                    "mvn", "spring-boot:run", 
+                    "-Dspring-boot.run.mainClass=" + mainClass,
+                    "-Dserver.port=" + port
+            );
+        } else {
+            // 如果找不到主类，使用默认命令
+            command = List.of(
+                    "mvn", "spring-boot:run", "-Dserver.port=" + port
+            );
+        }
+        
+        Path logFile = getLogFile(conversationId, "backend");
+        return startProcess(backendDir, command, conversationId, "Backend", logFile);
+    }
+
+    /**
+     * 查找Spring Boot主类
+     */
+    private String findMainClass(Path backendDir) {
+        // 1. 先检查pom.xml中是否有mainClass配置
+        Path pomFile = backendDir.resolve("pom.xml");
+        if (Files.exists(pomFile)) {
+            try {
+                String pomContent = Files.readString(pomFile);
+                // 查找spring-boot-maven-plugin配置中的mainClass
+                if (pomContent.contains("<mainClass>")) {
+                    int start = pomContent.indexOf("<mainClass>") + 11;
+                    int end = pomContent.indexOf("</mainClass>", start);
+                    if (end > start) {
+                        return pomContent.substring(start, end).trim();
+                    }
+                }
+            } catch (IOException e) {
+                log.error("Failed to read pom.xml", e);
+            }
+        }
+
+        // 2. 查找src/main/java目录下的Application类
+        Path javaDir = backendDir.resolve("src/main/java");
+        if (Files.exists(javaDir)) {
+            try {
+                java.util.List<String> appClasses = Files.walk(javaDir)
+                        .filter(Files::isRegularFile)
+                        .filter(p -> p.toString().endsWith("Application.java"))
+                        .map(p -> javaDir.relativize(p))
+                        .map(p -> p.toString().replace(".java", "").replace("/", "."))
+                        .toList();
+                
+                if (!appClasses.isEmpty()) {
+                    log.info("Found main class: {}", appClasses.get(0));
+                    return appClasses.get(0);
+                }
+            } catch (IOException e) {
+                log.error("Failed to find main class", e);
+            }
+        }
+
+        return null;
+    }
+
+    private Path getLogFile(Long conversationId, String service) {
+        // 在数据目录下创建日志文件
+        Path dataDir = Paths.get("data").toAbsolutePath();
+        try {
+            Files.createDirectories(dataDir);
+        } catch (IOException e) {
+            log.error("Failed to create data directory", e);
+        }
+        return dataDir.resolve("preview-" + conversationId + "-" + service + ".log");
     }
 
     private List<String> buildFrontendCommand(Path scriptPath, int port) {
         if (scriptPath != null && Files.exists(scriptPath)) {
             return List.of(
-                    "sh", "scripts/start-preview.sh", String.valueOf(port), "/__preview__/"
+                    "sh", "scripts/start-preview.sh", String.valueOf(port), PREVIEW_BASE_PATH
             );
         }
         return List.of(
-                "npm", "run", "dev", "--", "--port", String.valueOf(port), "--strictPort", "--base", "/__preview__/"
+                "npm", "run", "dev", "--", "--port", String.valueOf(port), "--strictPort", "--base", PREVIEW_BASE_PATH
         );
+    }
+
+    private boolean hasFrontendEntry(Path frontendDir) {
+        if (frontendDir == null || !Files.isDirectory(frontendDir)) {
+            return false;
+        }
+        return Files.exists(frontendDir.resolve("index.html"));
+    }
+
+    private Process startProcess(Path workingDir, List<String> command, Long conversationId, String serviceName, Path logFile) {
+        ProcessBuilder builder = new ProcessBuilder(command);
+        builder.directory(workingDir.toFile());
+        builder.redirectErrorStream(true);
+
+        // 设置环境变量，确保进程以当前用户运行
+        Map<String, String> environment = builder.environment();
+        // 继承父进程的 PATH 等关键环境变量
+        String path = System.getenv("PATH");
+        if (path != null) {
+            environment.put("PATH", path);
+        }
+        // 设置 HOME 环境变量，确保 npm/node 能正确访问用户目录
+        String home = System.getenv("HOME");
+        if (home != null) {
+            environment.put("HOME", home);
+        }
+        // 设置 USER 环境变量
+        String user = System.getenv("USER");
+        if (user != null) {
+            environment.put("USER", user);
+        }
+
+        try {
+            Process process = processLauncher.start(builder);
+
+            // 启动日志读取线程，写入文件
+            startLogReader(process, serviceName, logFile);
+
+            return process;
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to start preview process", e);
+        }
     }
 
     private Process startProcess(Path workingDir, List<String> command) {
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.directory(workingDir.toFile());
         builder.redirectErrorStream(true);
+
+        // 设置环境变量，确保进程以当前用户运行
+        Map<String, String> environment = builder.environment();
+        // 继承父进程的 PATH 等关键环境变量
+        String path = System.getenv("PATH");
+        if (path != null) {
+            environment.put("PATH", path);
+        }
+        // 设置 HOME 环境变量，确保 npm/node 能正确访问用户目录
+        String home = System.getenv("HOME");
+        if (home != null) {
+            environment.put("HOME", home);
+        }
+        // 设置 USER 环境变量
+        String user = System.getenv("USER");
+        if (user != null) {
+            environment.put("USER", user);
+        }
+
         try {
             return processLauncher.start(builder);
         } catch (IOException e) {
-            throw new RuntimeException("Failed to start preview process", e);
+            throw new RuntimeException("Failed to start process", e);
         }
+    }
+
+    /**
+     * 启动日志读取线程，将日志写入文件
+     */
+    private void startLogReader(Process process, String serviceName, Path logFile) {
+        Thread logReader = new Thread(() -> {
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getInputStream(), "UTF-8"));
+                 java.io.PrintWriter writer = new java.io.PrintWriter(
+                         new java.io.FileWriter(logFile.toFile(), true), true)) {
+                writer.println("=== " + serviceName + " Log Started at " + new java.util.Date() + " ===");
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    String logLine = "[" + new java.util.Date() + "] [" + serviceName + "] " + line;
+                    log.info(logLine);
+                    writer.println(logLine);
+                }
+            } catch (IOException e) {
+                log.error("Error reading {} logs", serviceName, e);
+            }
+        }, "LogReader-" + serviceName);
+        logReader.setDaemon(true);
+        logReader.start();
     }
 
     private void ensureFrontendDependencies(Path frontendDir) {
@@ -173,8 +344,9 @@ public class PreviewService {
 
 
     private PreviewStatusDTO buildStatus(Long conversationId, PreviewConfig config, Process frontend, Process backend, String message) {
-        boolean frontendRunning = isAlive(frontend);
-        boolean backendRunning = isAlive(backend);
+        // 优先使用端口检测，因为进程对象在后端重启后会丢失
+        boolean frontendRunning = isPortInUse(config.frontendPort()) || isAlive(frontend);
+        boolean backendRunning = isPortInUse(config.backendPort()) || isAlive(backend);
         boolean running = frontendRunning || backendRunning;
 
         String frontendUrl = frontendRunning ? "http://localhost:" + config.frontendPort() : null;
@@ -197,6 +369,20 @@ public class PreviewService {
         return process != null && process.isAlive();
     }
 
+    /**
+     * 检查指定端口是否被占用
+     * 通过尝试创建 ServerSocket 来检测端口是否可用
+     */
+    private boolean isPortInUse(int port) {
+        try (java.net.ServerSocket socket = new java.net.ServerSocket(port)) {
+            // 如果能成功绑定端口，说明端口未被占用
+            return false;
+        } catch (IOException e) {
+            // 如果绑定失败，说明端口已被占用
+            return true;
+        }
+    }
+
     private Conversation loadConversation(Long conversationId) {
         return conversationRepository.findById(conversationId)
                 .orElseThrow(() -> new RuntimeException("Conversation not found: " + conversationId));
@@ -207,7 +393,15 @@ public class PreviewService {
         if (rootPath == null || rootPath.isBlank()) {
             throw new RuntimeException("Conversation generated code path is not ready");
         }
-        return Paths.get(rootPath).toAbsolutePath().normalize();
+        Path path = Paths.get(rootPath).toAbsolutePath();
+        // 规范化路径，处理 macOS 上的符号链接（/var/folders -> /private/var/folders）
+        try {
+            path = path.toRealPath();
+        } catch (IOException e) {
+            // 如果无法解析真实路径，使用 normalize 作为后备
+            path = path.normalize();
+        }
+        return path;
     }
 
     private void stopSession(PreviewSession session) {
@@ -249,5 +443,8 @@ public class PreviewService {
             Process backendProcess,
             PreviewConfig config
     ) {
+    }
+
+    private record FrontendStartResult(Process process, String message) {
     }
 }

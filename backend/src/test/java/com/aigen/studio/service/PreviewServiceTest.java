@@ -64,6 +64,7 @@ class PreviewServiceTest {
     void startPreviewStartsExistingServicesAndUpdatesConversation(@TempDir Path tmp) throws Exception {
         Files.createDirectories(tmp.resolve("frontend"));
         Files.createDirectories(tmp.resolve("frontend/node_modules"));
+        Files.writeString(tmp.resolve("frontend/index.html"), "<!doctype html><div id=\"app\"></div>");
         Files.createDirectories(tmp.resolve("backend"));
         Files.writeString(tmp.resolve("application.yml"), "preview:\n  frontendPort: 3002\n  backendPort: 8081\n");
 
@@ -91,6 +92,7 @@ class PreviewServiceTest {
     void startPreviewSkipsMissingBackend(@TempDir Path tmp) throws Exception {
         Files.createDirectories(tmp.resolve("frontend"));
         Files.createDirectories(tmp.resolve("frontend/node_modules"));
+        Files.writeString(tmp.resolve("frontend/index.html"), "<!doctype html><div id=\"app\"></div>");
         Files.writeString(tmp.resolve("application.yml"), "preview:\n  frontendPort: 3002\n  backendPort: 8082\n");
 
         Conversation conversation = createConversation(tmp);
@@ -106,9 +108,26 @@ class PreviewServiceTest {
     }
 
     @Test
+    void startPreviewSkipsFrontendWhenEntryMissing(@TempDir Path tmp) throws Exception {
+        Path frontendDir = Files.createDirectories(tmp.resolve("frontend"));
+        Files.createDirectories(frontendDir.resolve("node_modules"));
+        Files.writeString(frontendDir.resolve("package.json"), "{}");
+
+        Conversation conversation = createConversation(tmp);
+
+        PreviewStatusDTO status = previewService.startPreview(conversation.getId());
+
+        assertFalse(status.isRunning());
+        assertFalse(status.isFrontendRunning());
+        assertEquals(0, processLauncher.startedBuilders.size());
+        assertTrue(status.getMessage() != null && status.getMessage().contains("index.html"));
+    }
+
+    @Test
     void startPreviewInstallsFrontendDependenciesWhenMissing(@TempDir Path tmp) throws Exception {
         Path frontendDir = Files.createDirectories(tmp.resolve("frontend"));
         Files.writeString(frontendDir.resolve("package.json"), "{}");
+        Files.writeString(frontendDir.resolve("index.html"), "<!doctype html><div id=\"app\"></div>");
 
         Conversation conversation = createConversation(tmp);
 

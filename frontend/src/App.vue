@@ -79,6 +79,16 @@ const triggerSidebarAction = (action: 'history' | 'new') => {
 }
 </script>
 
+<style>
+/* 全局样式覆盖 Element Plus 默认样式 */
+.el-main {
+  padding: 0 !important;
+  margin: 0 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+}
+</style>
+
 <style scoped>
 #app {
   min-height: 100vh;
@@ -200,10 +210,13 @@ const triggerSidebarAction = (action: 'history' | 'new') => {
 .main-container {
   flex: 1;
   background-color: #1a1a1a;
+  overflow: hidden;
 }
 
 .main-content {
   padding: 0;
   overflow: hidden;
+  width: 100%;
+  margin: 0 !important;
 }
 </style>

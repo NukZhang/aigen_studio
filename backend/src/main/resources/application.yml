@@ -54,6 +54,10 @@ gitlab:
   base-path: AIGen
   timeout: 600000  # 10 minutes
 
+# Tutorial Configuration
+tutorial:
+  base-path: tutorials
+
 # Logging
 logging:
   level:

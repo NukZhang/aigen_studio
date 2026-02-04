@@ -165,5 +165,12 @@ export const previewApi = {
 
   getStatus: (conversationId: number) => {
     return api.get<PreviewStatus>(`/preview/conversation/${conversationId}/status`)
+  },
+
+  getLogs: (conversationId: number, lines: number = 100) => {
+    return api.get<{ conversationId: number, logs: string[], count: number }>(
+      `/preview/conversation/${conversationId}/logs`,
+      { params: { lines } }
+    )
   }
 }

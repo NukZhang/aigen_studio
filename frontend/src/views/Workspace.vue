@@ -162,12 +162,7 @@
         <el-tabs v-model="activeTab" type="border-card">
           <el-tab-pane label="预览" name="preview">
             <div class="tab-content preview-content">
-              <PreviewPanel v-if="conversationId" :conversation-id="conversationId" />
-              <div v-else class="placeholder">
-                <el-icon size="64"><Monitor /></el-icon>
-                <p>预览仅支持对话模式</p>
-                <p class="hint">请先创建对话并完成代码生成</p>
-              </div>
+              <PreviewPanel :conversation-id="conversationId || undefined" />
             </div>
           </el-tab-pane>
           <el-tab-pane label="文件" name="files">
@@ -216,10 +211,39 @@
           </el-tab-pane>
           <el-tab-pane label="教程" name="tutorial">
             <div class="tab-content tutorial-content">
-              <div class="placeholder">
-                <el-icon size="64"><Reading /></el-icon>
-                <p>教程文档暂未实现</p>
-                <p class="hint">项目开发指南将在此处展示</p>
+              <div class="tutorial-view">
+                <div class="tutorial-sidebar">
+                  <div v-if="tutorialHeadings.length === 0" class="no-headings">
+                    <span>暂无标题</span>
+                  </div>
+                  <el-tree
+                    v-else
+                    :data="tutorialHeadings"
+                    :props="headingTreeProps"
+                    node-key="anchor"
+                    :expand-on-click-node="false"
+                    @node-click="handleHeadingClick"
+                    :highlight-current="true"
+                    :default-expand-all="true"
+                  >
+                    <template #default="{ node, data }">
+                      <span class="heading-node" :class="'heading-level-' + data.level">
+                        <span>{{ node.label }}</span>
+                      </span>
+                    </template>
+                  </el-tree>
+                </div>
+                <div class="tutorial-preview" ref="tutorialPreviewRef">
+                  <div v-if="tutorialLoading" class="loading-container">
+                    <el-icon class="is-loading"><Loading /></el-icon>
+                    <span>加载中...</span>
+                  </div>
+                  <div v-else-if="currentTutorialContent" class="markdown-content" v-html="renderedTutorialContent"></div>
+                  <div v-else class="empty-container">
+                    <el-icon><Reading /></el-icon>
+                    <span>加载中...</span>
+                  </div>
+                </div>
               </div>
             </div>
           </el-tab-pane>
@@ -249,6 +273,7 @@ import {
 } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import { conversationApi, previewApi, type FileNode } from '../api/job'
+import { getTutorialTree, getTutorialContent, type TutorialNode } from '../api/tutorial'
 import FileBrowser from './FileBrowser.vue'
 import CodeEditor from './CodeEditor.vue'
 import PreviewPanel from './PreviewPanel.vue'
@@ -291,6 +316,19 @@ const selectedFile = ref<FileNode | null>(null)
 const conversationId = ref<number | null>(null)
 const showConversationList = ref(false)
 const conversationList = ref<Conversation[]>([])
+const tutorialTree = ref<TutorialNode[]>([])
+const tutorialHeadings = ref<any[]>([])
+const currentTutorialContent = ref('')
+const tutorialLoading = ref(false)
+const tutorialPreviewRef = ref<HTMLElement | null>(null)
+const tutorialTreeProps = {
+  children: 'children',
+  label: 'name'
+}
+const headingTreeProps = {
+  children: 'children',
+  label: 'text'
+}
 const autoRefreshTimer = ref<number | null>(null)
 const isLoadingConversation = ref(false)
 const AUTO_REFRESH_INTERVAL = 3000
@@ -396,6 +434,9 @@ onMounted(async () => {
 
   // 加载历史对话列表
   await loadConversationList()
+
+  // 加载教程目录树
+  await loadTutorialTree()
 })
 
 const clearActionQuery = () => {
@@ -645,6 +686,91 @@ const selectConversation = async (conv: Conversation) => {
 const getStageLabel = (stage: string) => {
   return stageLabelMap[stage] || stage
 }
+
+const loadTutorialTree = async () => {
+  try {
+    const { data } = await getTutorialTree()
+    tutorialTree.value = data
+
+    // 自动加载第一个教程文件
+    const firstFile = findFirstTutorialFile(data)
+    if (firstFile) {
+      await loadTutorialContent(firstFile.path)
+    }
+  } catch (error) {
+    ElMessage.error('加载教程目录失败')
+  }
+}
+
+const findFirstTutorialFile = (nodes: any[]): any | null => {
+  for (const node of nodes) {
+    if (node.type === 'file') {
+      return node
+    }
+    if (node.children && Array.isArray(node.children) && node.children.length > 0) {
+      const found = findFirstTutorialFile(node.children)
+      if (found) {
+        return found
+      }
+    }
+  }
+  return null
+}
+
+const loadTutorialContent = async (path: string) => {
+  tutorialLoading.value = true
+  try {
+    const { data: contentData } = await getTutorialContent(path)
+    currentTutorialContent.value = contentData.content
+    tutorialHeadings.value = contentData.headings || []
+  } catch (error) {
+    ElMessage.error('加载教程内容失败')
+    currentTutorialContent.value = ''
+    tutorialHeadings.value = []
+  } finally {
+    tutorialLoading.value = false
+  }
+}
+
+const handleHeadingClick = (data: any) => {
+  const anchor = data.anchor
+  const element = document.getElementById(anchor)
+  if (element && tutorialPreviewRef.value) {
+    const previewRect = tutorialPreviewRef.value.getBoundingClientRect()
+    const elementRect = element.getBoundingClientRect()
+    const scrollTop = elementRect.top - previewRect.top - 20 // 20px padding
+    tutorialPreviewRef.value.scrollTop += scrollTop
+  }
+}
+
+const renderedTutorialContent = computed(() => {
+  if (!currentTutorialContent.value) return ''
+  const html = marked(currentTutorialContent.value)
+  // 为标题添加锚点 ID
+  return html.replace(/<h([1-6])>(.*?)<\/h\1>/g, (match, level, text) => {
+    const anchor = generateAnchorFromText(text)
+    return `<h${level} id="${anchor}">${text}</h${level}>`
+  })
+})
+
+const generateAnchorFromText = (text: string) => {
+  // 移除 HTML 标签
+  const plainText = text.replace(/<[^>]*>/g, '')
+  // 转小写，移除特殊字符，空格替换为连字符
+  return plainText.toLowerCase()
+          .replace(/[^\w\s\u4e00-\u9fa5]/g, '')
+          .replace(/\s+/g, '-')
+}
+
+// 监听教程目录树变化，自动加载第一个文件
+watch(tutorialTree, (newTree) => {
+  if (newTree && newTree.length > 0 && !currentTutorialContent.value) {
+    const firstFile = findFirstTutorialFile(newTree)
+    if (firstFile) {
+      loadTutorialContent(firstFile.path)
+    }
+  }
+})
 
 const stopAutoRefresh = () => {
   if (autoRefreshTimer.value !== null) {
@@ -1096,6 +1222,7 @@ onUnmounted(() => {
 
 .tab-content {
   height: 100%;
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1106,7 +1233,10 @@ onUnmounted(() => {
 /* 特定标签页样式 */
 .files-content,
 .code-content,
-.preview-content {
+.preview-content,
+.tutorial-content {
+  width: 100%;
+  flex: 1;
   align-items: stretch;
   justify-content: flex-start;
 }
@@ -1153,6 +1283,276 @@ onUnmounted(() => {
 .placeholder .hint {
   font-size: 12px;
   opacity: 0.7;
+}
+
+.tutorial-view {
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+
+.tutorial-sidebar {
+  width: 280px;
+  background-color: #2a2a2a;
+  border-right: 1px solid #3a3a3a;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.tutorial-sidebar :deep(.el-tree) {
+  background: transparent;
+  color: #e0e0e0;
+}
+
+.tutorial-sidebar :deep(.el-tree-node__content) {
+  background: transparent;
+  color: #e0e0e0;
+}
+
+.tutorial-sidebar :deep(.el-tree-node__content:hover) {
+  background-color: #3a3a3a;
+}
+
+.tutorial-sidebar :deep(.el-tree-node.is-current > .el-tree-node__content) {
+  background-color: #4a4a4a;
+  color: #fff;
+}
+
+.tutorial-sidebar :deep(.el-tree-node__expand-icon) {
+  color: #999;
+}
+
+.tutorial-sidebar :deep(.el-tree-node__expand-icon.is-leaf) {
+  color: transparent;
+}
+
+.tutorial-preview {
+  flex: 1;
+  background-color: #1f1f1f;
+  overflow-y: auto;
+  padding: 32px;
+}
+
+.tutorial-sidebar .no-headings {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #666;
+  font-size: 14px;
+}
+
+.tutorial-sidebar .heading-node {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #e0e0e0;
+  cursor: pointer;
+  transition: color 0.2s;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.tutorial-sidebar .heading-node:hover {
+  background-color: #3a3a3a;
+  color: #fff;
+}
+
+.tutorial-sidebar .heading-level-1 {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.tutorial-sidebar .heading-level-2 {
+  padding-left: 20px;
+  font-size: 14px;
+}
+
+.tutorial-sidebar .heading-level-3 {
+  padding-left: 36px;
+  font-size: 13px;
+  color: #ccc;
+}
+
+.tutorial-sidebar .heading-level-4 {
+  padding-left: 52px;
+  font-size: 13px;
+  color: #bbb;
+}
+
+.tutorial-sidebar .heading-level-5 {
+  padding-left: 68px;
+  font-size: 12px;
+  color: #aaa;
+}
+
+.tutorial-sidebar .heading-level-6 {
+  padding-left: 84px;
+  font-size: 12px;
+  color: #aaa;
+}
+
+.loading-container,
+.empty-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #666;
+  gap: 12px;
+}
+
+.loading-container .el-icon,
+.empty-container .el-icon {
+  font-size: 48px;
+}
+
+.markdown-content {
+  max-width: 900px;
+  margin: 0 auto;
+  line-height: 1.8;
+  color: #e0e0e0;
+}
+
+.markdown-content :deep(h1) {
+  font-size: 28px;
+  font-weight: 700;
+  margin-top: 0;
+  margin-bottom: 24px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid #3a3a3a;
+  color: #fff;
+  scroll-margin-top: 20px;
+}
+
+.markdown-content :deep(h2) {
+  font-size: 24px;
+  font-weight: 600;
+  margin-top: 32px;
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #3a3a3a;
+  color: #fff;
+  scroll-margin-top: 20px;
+}
+
+.markdown-content :deep(h3) {
+  font-size: 20px;
+  font-weight: 600;
+  margin-top: 24px;
+  margin-bottom: 12px;
+  color: #fff;
+  scroll-margin-top: 20px;
+}
+
+.markdown-content :deep(h4) {
+  font-size: 18px;
+  font-weight: 600;
+  margin-top: 20px;
+  margin-bottom: 10px;
+  color: #fff;
+  scroll-margin-top: 20px;
+}
+
+.markdown-content :deep(h5) {
+  font-size: 16px;
+  font-weight: 600;
+  margin-top: 18px;
+  margin-bottom: 8px;
+  color: #fff;
+  scroll-margin-top: 20px;
+}
+
+.markdown-content :deep(h6) {
+  font-size: 14px;
+  font-weight: 600;
+  margin-top: 16px;
+  margin-bottom: 8px;
+  color: #fff;
+  scroll-margin-top: 20px;
+}
+
+.markdown-content :deep(p) {
+  margin-bottom: 16px;
+}
+
+.markdown-content :deep(ul),
+.markdown-content :deep(ol) {
+  margin-bottom: 16px;
+  padding-left: 24px;
+}
+
+.markdown-content :deep(li) {
+  margin-bottom: 8px;
+}
+
+.markdown-content :deep(code) {
+  background: #2a2a2a;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'Monaco', 'Courier New', monospace;
+  font-size: 14px;
+  color: #d63384;
+}
+
+.markdown-content :deep(pre) {
+  background: #282c34;
+  color: #abb2bf;
+  padding: 16px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin-bottom: 16px;
+}
+
+.markdown-content :deep(pre code) {
+  background: none;
+  padding: 0;
+  color: inherit;
+}
+
+.markdown-content :deep(blockquote) {
+  border-left: 4px solid #667eea;
+  padding-left: 16px;
+  margin: 16px 0;
+  color: #999;
+  background: #2a2a2a;
+  padding: 12px 16px;
+  border-radius: 4px;
+}
+
+.markdown-content :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 16px;
+}
+
+.markdown-content :deep(th),
+.markdown-content :deep(td) {
+  border: 1px solid #3a3a3a;
+  padding: 12px;
+  text-align: left;
+}
+
+.markdown-content :deep(th) {
+  background: #2a2a2a;
+  font-weight: 600;
+}
+
+.markdown-content :deep(a) {
+  color: #667eea;
+  text-decoration: none;
+}
+
+.markdown-content :deep(a:hover) {
+  text-decoration: underline;
+}
+
+.markdown-content :deep(img) {
+  max-width: 100%;
+  border-radius: 8px;
+  margin: 16px 0;
 }
 
 /* 历史对话列表 */
