@@ -2035,20 +2035,48 @@ onUnmounted(() => {
 .chat-input :deep(.el-dropdown-menu) {
   background-color: #2a2a2a;
   border-color: #3a3a3a;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
 }
 
 .chat-input :deep(.el-dropdown-menu__item) {
   color: #e0e0e0;
-  padding: 8px 12px;
+  padding: 10px 16px;
+  font-size: 14px;
+  transition: background-color 0.2s;
 }
 
 .chat-input :deep(.el-dropdown-menu__item:hover) {
-  background-color: #3a3a3a;
+  background-color: #3a3a3a !important;
 }
 
 .chat-input :deep(.el-dropdown-menu__item.is-active) {
-  background-color: rgba(255, 255, 255, 0.1);
+  background-color: rgba(255, 255, 255, 0.1) !important;
   color: #e0e0e0;
   border-left: 2px solid #667eea;
+}
+
+/* 通用下拉菜单深色主题 */
+:deep(.el-dropdown-menu) {
+  background-color: #2a2a2a;
+  border-color: #3a3a3a;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+:deep(.el-dropdown-menu__item) {
+  color: #e0e0e0;
+  padding: 10px 16px;
+  font-size: 14px;
+  transition: background-color 0.2s;
+}
+
+:deep(.el-dropdown-menu__item:hover) {
+  background-color: #3a3a3a !important;
+}
+
+:deep(.el-dropdown-menu__item.is-active) {
+  background-color: rgba(255, 255, 255, 0.1) !important;
+  color: #e0e0e0;
 }
 </style>
