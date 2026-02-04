@@ -2,324 +2,406 @@
 
 ## 项目概述
 
-AIGen Studio 是一个基于 Me2AI 规范实现的 AI 代码生成平台 PoC，已完成第一阶段的所有核心功能实现。
+AIGen Studio 是一个基于 iFlow SDK 实现的 AI 驱动开发平台，通过自然语言对话完成应用开发。项目已实现从需求理解、代码生成到实时预览的完整开发流程。
 
-## 实现状态
+## 核心架构
 
-### ✅ 已完成功能
+### 对话驱动的开发流程
 
-#### 1. 后端实现（Spring Boot）
+平台采用对话驱动的开发模式，通过以下阶段完成应用开发：
 
-**实体层**
-- Requirement（需求实体）
-- IRDocument（IR 文档实体）
-- GenerationJob（生成作业实体）
-- Artifact（产出物实体）
+1. **NEED_INPUT** - 用户输入需求
+2. **UNDERSTANDING** - AI 理解需求
+3. **UNDERSTANDING_CONFIRMED** - 用户确认理解
+4. **CODE_GENERATING** - AI 生成代码
+5. **READY_TO_START** - 等待确认启动
+6. **SERVICE_STARTING** - 启动服务
+7. **PREVIEWING** - 实时预览
+8. **COMPLETED** - 生成完成
+9. **FAILED** - 生成失败
 
-**数据访问层**
-- RequirementRepository
-- IRDocumentRepository
-- GenerationJobRepository
-- ArtifactRepository
+### 实体设计
 
-**服务层**
-- RequirementService：需求管理服务
-- IRDocumentService：IR 文档管理服务
-- GenerationJobService：作业管理服务（支持异步执行）
-- IFlowGenerationService：iFlow SDK 集成服务
-- ArtifactService：产出物管理服务
+#### Conversation（对话实体）
+- `id` - 对话 ID
+- `projectName` - 项目名称
+- `status` - 对话状态（ACTIVE, COMPLETED, CANCELLED, FAILED）
+- `stage` - 对话阶段（ConversationStage 枚举）
+- `userRequirement` - 用户需求描述
+- `aiUnderstanding` - AI 理解的需求（IR 格式）
+- `understandingConfirmed` - 是否确认理解
+- `generatedCodePath` - 生成的代码路径
+- `serviceStatus` - 服务状态
+- `previewUrl` - 预览 URL
+- `errorMessage` - 错误信息
 
-**控制器层**
-- RequirementController：需求管理 API
-- IRDocumentController：IR 文档管理 API
-- GenerationJobController：作业管理 API
-- ArtifactController：产出物管理 API
+#### Message（消息实体）
+- `id` - 消息 ID
+- `conversation` - 关联的对话
+- `role` - 角色（user, assistant）
+- `content` - 消息内容
+- `senderName` - 发送者名称
+- `timestamp` - 时间戳
 
-**配置**
-- OpenApiConfig：Swagger API 文档配置
-- SecurityConfig：安全配置（开发模式）
-- AsyncConfig：异步任务配置
+## 后端实现
 
-#### 2. 前端实现（Vue 3）
+### 控制器层（5个）
 
-**页面组件**
-- Requirements：需求列表页面
-- RequirementDetail：需求详情页面（包含 IR 编辑器和作业管理）
-- Jobs：作业列表页面
-- JobDetail：作业详情页面（包含日志和产出物）
-- Artifacts：产出物管理页面
+1. **ConversationController** - 对话管理 API
+   - 创建新对话
+   - 获取对话详情
+   - 发送消息
+   - 确认理解
 
-**API 服务**
-- requirementApi：需求管理 API
-- irDocumentApi：IR 文档管理 API
-- jobApi：作业管理 API
-- artifactApi：产出物管理 API
+2. **PreviewController** - 预览管理 API
+   - 启动预览
+   - 停止预览
+   - 重启预览
+   - 获取预览状态
+   - 获取预览日志
 
-**路由配置**
-- 需求管理路由
-- 作业管理路由
-- 产出物路由
+3. **FileController** - 文件管理 API
+   - 获取文件树
+   - 读取文件内容
+   - 保存文件内容
+   - 创建文件/目录
+   - 重命名/删除
+   - 上传文件
 
-#### 3. 核心功能
+4. **ModelController** - 模型管理 API
+   - 获取可用模型列表
 
-**需求管理**
-- 创建需求（包含编号、标题、描述）
-- 编辑需求
-- 删除需求
-- 更新需求状态
-- 需求列表查看
+5. **TutorialController** - 教程管理 API
+   - 获取教程目录树
+   - 获取教程内容
+   - 提取教程标题树
 
-**IR 文档管理**
-- 创建 IR 文档
-- 在线编辑 IR 文档（JSON 格式）
-- IR 文档验证
-- IR 状态管理
-- 默认 IR 模板
+### 服务层（13个）
 
-**代码生成作业**
-- 创建作业
-- 异步执行作业
-- 实时日志输出
-- 作业状态跟踪
-- Git 信息记录
+#### 核心服务
 
-**产出物管理**
-- 查看作业产出物
-- 产出物预览
-- 产出物下载
-- 多种产出物类型支持
+1. **ConversationService** - 对话服务
+   - 创建新对话
+   - 发送消息到对话
+   - 确认理解
+   - 获取活跃对话列表
 
-#### 4. iFlow SDK 集成
+2. **PromptTaskService** - 提示任务服务
+   - 需求理解
+   - 代码生成
+   - 通过 ICodingService 接口与 SDK 交互
 
-**代码生成功能**
-- 前端 Vue 项目生成
-- 后端 Spring Boot 项目生成
-- OpenAPI 规范生成
-- TypeScript SDK 生成
-- Breaking-change 检测
+3. **PreviewService** - 预览服务
+   - 启动前后端服务
+   - 停止服务
+   - 进程管理
+   - 日志记录
+   - 端口检测
 
-#### 5. 文档和脚本
+4. **FileService** - 文件服务
+   - 读取文件树
+   - 读取/保存文件内容
+   - 创建/重命名/删除文件和目录
+   - 文件上传
 
-**项目文档**
-- README.md：项目主文档
-- PROJECT_README.md：详细项目文档
-- QUICKSTART.md：快速入门指南
-- DEPLOYMENT.md：部署指南
-- IR_TEMPLATE.md：IR 文档模板
+#### 辅助服务
 
-**启动脚本**
-- start-backend.sh：后端启动脚本
-- start-frontend.sh：前端启动脚本
-- start-all.sh：一键启动脚本
+5. **FileWorkspaceService** - 文件工作区服务
+   - 文本读写
+   - 文件创建
+   - 目录操作
+   - 文件上传
 
-## 技术架构
+6. **PreviewConfigResolver** - 预览配置解析器
+   - 解析项目配置文件
+   - 自动检测前端和后端配置
+   - 端口分配
+
+7. **PreviewScriptService** - 预览脚本服务
+   - 生成启动脚本
+   - 确保依赖安装
+   - 路由配置
+
+8. **TutorialService** - 教程服务
+   - 读取教程目录
+   - 解析 Markdown 内容
+   - 提取标题树
+
+9. **GitLabService** - GitLab 集成服务
+   - 项目创建
+   - 代码提交
+   - Pipeline 触发
+
+#### 进程管理服务
+
+10. **ProcessLauncher** - 进程启动器接口
+11. **DefaultProcessLauncher** - 默认进程启动器实现
+12. **ProcessTerminator** - 进程终止器接口
+13. **SystemProcessTerminator** - 系统进程终止器实现
+
+### SDK 层
+
+#### ICodingService - 编码服务接口
+- `getAvailableModels()` - 获取可用模型列表
+- `executeTask()` - 执行任务（对话方式）
+- `MessageHandler` - 消息处理器接口
+
+#### ModelService - 模型服务
+- 实现模型列表获取
+- 提供模型选择功能
+
+#### iFlow SDK 集成
+- 具体的 iFlow SDK 实现位于 `sdk/iflow/` 目录
+- 支持对话式代码生成
+- 消息流处理（AssistantMessage, ToolCallMessage, ToolResultMessage, TaskFinishMessage）
+
+### 配置类（7个）
+
+1. **AsyncConfig** - 异步任务配置
+2. **ConversationHandler** - 对话处理器
+3. **GitLabProperties** - GitLab 配置属性
+4. **OpenApiConfig** - Swagger API 文档配置
+5. **OutputDirConfig** - 输出目录配置
+6. **SchemaCleanupConfig** - Schema 清理配置
+7. **SecurityConfig** - 安全配置
+8. **SSLConfig** - SSL 配置（处理自签名证书）
+9. **WebSocketConfig** - WebSocket 配置
+
+## 前端实现
+
+### 页面组件（4个）
+
+1. **Workspace.vue** - 主工作区
+   - 对话面板（聊天界面）
+   - 开发者面板（多标签页）
+   - 对话历史列表
+   - 对话阶段指示器
+   - 理解确认界面
+   - 模型选择器
+   - 文件上传
+
+2. **PreviewPanel.vue** - 预览面板
+   - 实时预览嵌入
+   - 预览控制按钮（启动/停止/重启）
+   - 状态显示
+   - URL 展示
+
+3. **FileBrowser.vue** - 文件浏览器
+   - 文件树展示
+   - 文件类型图标
+   - 目录展开/折叠
+   - 文件选择
+
+4. **CodeEditor.vue** - 代码编辑器
+   - Monaco Editor 集成
+   - 语法高亮
+   - 代码保存
+   - 文件内容显示
+
+### API 服务（3个）
+
+1. **job.ts** - 核心 API
+   - `conversationApi` - 对话 API
+   - `previewApi` - 预览 API
+   - `fileApi` - 文件 API
+   - `modelApi` - 模型 API
+
+2. **tutorial.ts** - 教程 API
+   - `getTutorialTree()` - 获取教程目录
+   - `getTutorialContent()` - 获取教程内容
+
+### 组件（1个）
+
+1. **FileTreeNode.vue** - 文件树节点组件
+
+## 核心功能实现
+
+### 1. 对话创建和管理
+
+```java
+// 创建新对话
+@PostMapping("/conversations/new")
+public ResponseEntity<ConversationDTO> createNewConversation(
+        @RequestParam(required = false, defaultValue = "user") String createdBy)
+
+// 发送消息
+@PostMapping("/conversations/new/{id}/messages")
+public ResponseEntity<MessageDTO> sendMessageToNewConversation(
+        @PathVariable Long id,
+        @RequestBody MessageDTO message)
+
+// 确认理解
+@PostMapping("/conversations/new/{id}/confirm")
+public ResponseEntity<ConversationDTO> confirmUnderstanding(
+        @PathVariable Long id,
+        @RequestBody ConfirmUnderstandingRequest request)
+```
+
+### 2. 代码生成流程
+
+```java
+// PromptTaskService 提供任务执行逻辑
+public void generateCode(
+        String irContent,
+        Path outputPath,
+        Consumer<String> logConsumer) {
+    // 构建代码生成提示词
+    // 通过 ICodingService.executeTask 执行
+    // 实时处理消息流
+}
+```
+
+### 3. 预览服务管理
+
+```java
+// 启动预览服务
+public PreviewStatusDTO startPreview(Long conversationId) {
+    // 解析项目配置
+    // 启动前端服务（npm run dev）
+    // 启动后端服务（mvn spring-boot:run）
+    // 记录进程 PID
+    // 启动日志记录线程
+    // 更新对话状态
+}
+
+// 端口检测
+private boolean isPortInUse(int port) {
+    // 通过 ServerSocket 检测端口是否被占用
+}
+```
+
+### 4. 文件管理
+
+```java
+// 获取文件树
+public List<FileNodeDTO> getConversationFileTree(Long conversationId) {
+    // 递归构建文件树
+    // 文件类型识别
+    // 大小计算
+}
+
+// 文件读写
+public String getConversationFileContent(Long conversationId, String filePath)
+public void saveConversationFileContent(Long conversationId, String filePath, String content)
+```
+
+## 技术栈
 
 ### 后端技术栈
 
-- Spring Boot 3.2.0
-- Spring Data JPA
-- H2 数据库（开发环境）
-- Spring Security
-- OpenAPI 3.0（Swagger）
-- Lombok
-- Jackson
+- **框架**: Spring Boot 3.2.0
+- **数据持久化**: Spring Data JPA + H2 数据库
+- **安全**: Spring Security（开发模式开放）
+- **API 文档**: OpenAPI 3.0
+- **AI 集成**: iFlow SDK
+- **响应式编程**: Project Reactor（用于 iFlow 消息流处理）
 
 ### 前端技术栈
 
-- Vue 3.4.0
-- TypeScript 5.3
-- Vite 5.0
-- Element Plus 2.4
-- Pinia
-- Vue Router 4.2
-- Axios
-
-### 项目结构
-
-```
-aigen_studio/
-├── backend/                    # 后端项目
-│   ├── src/main/java/com/aigen/studio/
-│   │   ├── controller/         # REST API 控制器（4个）
-│   │   ├── service/            # 业务逻辑层（5个）
-│   │   ├── repository/         # 数据访问层（4个）
-│   │   ├── entity/             # 实体类（4个）
-│   │   ├── dto/                # 数据传输对象（6个）
-│   │   └── config/             # 配置类（3个）
-│   ├── src/main/resources/
-│   │   └── application.yml     # 应用配置
-│   └── pom.xml                 # Maven 配置
-├── frontend/                   # 前端项目
-│   ├── src/
-│   │   ├── views/              # 页面组件（5个）
-│   │   ├── api/                # API 服务（5个）
-│   │   ├── router/             # 路由配置
-│   │   ├── App.vue             # 根组件
-│   │   └── main.ts             # 入口文件
-│   ├── package.json            # npm 配置
-│   └── vite.config.ts          # Vite 配置
-├── scripts/                    # 启动脚本
-│   ├── start-backend.sh
-│   ├── start-frontend.sh
-│   └── start-all.sh
-├── docs/                       # 项目文档
-│   ├── QUICKSTART.md
-│   ├── DEPLOYMENT.md
-│   └── IR_TEMPLATE.md
-└── spec/                       # 需求规范
-    └── Me2AI/
-```
-
-## API 接口
-
-### 需求管理 API
-
-- `POST /api/requirements` - 创建需求
-- `GET /api/requirements` - 获取需求列表
-- `GET /api/requirements/{id}` - 获取需求详情
-- `PUT /api/requirements/{id}` - 更新需求
-- `PATCH /api/requirements/{id}/status` - 更新需求状态
-- `DELETE /api/requirements/{id}` - 删除需求
-
-### IR 文档管理 API
-
-- `POST /api/ir-documents` - 创建 IR 文档
-- `GET /api/ir-documents/{id}` - 获取 IR 文档
-- `PUT /api/ir-documents/{id}` - 更新 IR 文档
-- `POST /api/ir-documents/{id}/validate` - 验证 IR 文档
-- `DELETE /api/ir-documents/{id}` - 删除 IR 文档
-
-### 作业管理 API
-
-- `POST /api/generation-jobs` - 创建作业
-- `GET /api/generation-jobs` - 获取作业列表
-- `GET /api/generation-jobs/{id}` - 获取作业详情
-- `POST /api/generation-jobs/{id}/execute` - 执行作业
-
-### 产出物管理 API
-
-- `GET /api/artifacts/job/{jobId}` - 获取作业产出物
-- `GET /api/artifacts/{id}` - 获取产出物详情
+- **框架**: Vue 3.4.0 + TypeScript 5.3
+- **构建工具**: Vite 5.0
+- **UI 组件库**: Element Plus 2.4
+- **状态管理**: Pinia 2.1
+- **路由**: Vue Router 4.2
+- **代码编辑器**: Monaco Editor 0.45
+- **HTTP 客户端**: Axios 1.6
 
 ## 数据库设计
 
 ### 表结构
 
-1. **requirements** - 需求表
-   - id, code, title, description, status
-   - created_by, updated_by, created_at, updated_at
+1. **conversations** - 对话表
+   - id, project_name, status, stage
+   - user_requirement, ai_understanding, understanding_confirmed
+   - generated_code_path, service_status, preview_url, error_message
+   - created_by, created_at, updated_at
 
-2. **ir_documents** - IR 文档表
-   - id, requirement_id, content, status, validation_errors
-   - created_by, updated_by, created_at, updated_at
-
-3. **generation_jobs** - 生成作业表
-   - id, requirement_id, ir_document_id, job_code, status
-   - log_output, gitlab_branch, gitlab_commit_id, gitlab_pipeline_id
-   - error_message, created_by, created_at, updated_at
-
-4. **artifacts** - 产出物表
-   - id, job_id, name, type, path, preview, file_size, created_at
+2. **messages** - 消息表
+   - id, conversation_id, role, content, sender_name
+   - timestamp, created_at
 
 ## 配置说明
 
-### 环境变量
+### 应用配置（application.yml）
 
-- `IFLOW_API_KEY` - iFlow SDK API 密钥
-- `GITLAB_URL` - GitLab 服务器地址
-- `GITLAB_TOKEN` - GitLab 访问令牌
-- `GITLAB_PROJECT_ID` - GitLab 项目 ID
+```yaml
+server:
+  port: 8080
 
-### 应用配置
+iflow:
+  sdk:
+    endpoint: https://platform.iflow.cn
+    api-key: ${IFLOW_API_KEY}
+    timeout: 300000
+    auto-start-process: true
+    file-access: true
+    output-dir: ${IFLOW_OUTPUT_DIR:../../generated-code}
 
-- 服务器端口：8080
-- 数据库：H2（内存数据库）
-- API 文档：/api/swagger-ui.html
-- H2 控制台：/api/h2-console
+gitlab:
+  url: https://git.longhu.net
+  token: ***REMOVED***
+  base-path: AIGen
+  timeout: 600000
 
-## 验收标准达成情况
-
-### 功能验收 ✅
-
-- ✅ 可以在管理后台创建需求并生成 IR
-- ✅ 点击生成后能够执行代码生成作业
-- ✅ 能够查看作业执行日志
-- ✅ 能够查看和下载产出物
-
-### 质量门禁 ✅
-
-- ✅ IR 校验通过
-- ✅ 基础构建功能实现
-- ✅ 代码生成流程完整
-
-## 待实现功能（第二阶段）
-
-### GitLab 集成
-
-- GitLab MCP 集成
-- GitLab 分支创建和管理
-- GitLab 提交和 Push
-- GitLab Pipeline 触发
-
-### OpenAPI 增强
-
-- OpenAPI breaking-change 检测
-- 自动化 TS SDK 生成
-- OpenAPI 文档更新
-
-### Evidence 管理
-
-- Evidence manifest 生成
-- 输入输出记录
-- 质量门禁记录
-- 审计日志
-
-### Gravitee 集成（可选）
-
-- 灰度策略导入导出
-- API 网关配置
-- 发布联动
+tutorial:
+  base-path: tutorials
+```
 
 ## 使用流程
 
-1. 用户登录系统
-2. 创建新需求
-3. 编辑 IR 文档（JSON 格式）
-4. 验证 IR 文档
-5. 创建代码生成作业
-6. 执行作业
-7. 查看执行日志
-8. 下载生成的代码
+1. 用户创建新对话
+2. 输入需求描述（自然语言）
+3. AI 理解需求并生成 IR
+4. 用户确认理解内容
+5. AI 自动生成代码（前端 Vue + 后端 Spring Boot）
+6. 用户确认启动
+7. 系统自动启动前后端服务
+8. 实时预览应用运行效果
+9. 在线编辑和优化代码
+10. 发布到 GitLab（待实现）
 
-## 开发指南
+## 已实现功能
 
-### 启动项目
+✅ 对话创建和管理
+✅ 需求理解和确认
+✅ AI 代码生成（通过 iFlow SDK）
+✅ 前后端服务自动启动
+✅ 实时预览功能
+✅ 文件浏览器
+✅ 在线代码编辑器
+✅ 模型选择
+✅ 教程系统
+✅ 进程管理（启动、停止、重启）
+✅ 日志记录和查看
+✅ GitLab 集成基础
 
-```bash
-# 一键启动
-./scripts/start-all.sh
+## 待实现功能
 
-# 或分别启动
-cd backend && mvn spring-boot:run
-cd frontend && npm install && npm run dev
-```
+- GitLab Pipeline 触发
+- 发布功能完善
+- 脚本执行功能
+- OpenAPI breaking-change 检测
+- 自动化 TS SDK 生成
+- Evidence manifest 生成
 
-### 访问地址
+## 开发建议
 
-- 前端：http://localhost:3000
-- 后端：http://localhost:8080/api
-- API 文档：http://localhost:8080/api/swagger-ui.html
+### 后端开发
+1. 使用 IntelliJ IDEA 进行开发
+2. 安装 Lombok 插件
+3. 启用 Spring Boot DevTools 热重载
+4. 使用 H2 控制台查看数据库内容
+5. 查看实时日志：`tail -f backend.log`
 
-### 开发建议
-
-1. 后端开发使用 IntelliJ IDEA
-2. 前端开发使用 VS Code
-3. 遵循现有代码风格
-4. 添加适当的注释
-5. 编写单元测试
+### 前端开发
+1. 使用 VS Code 进行开发
+2. 安装 Volar 插件（Vue 3 支持）
+3. 使用 ESLint 进行代码检查
+4. 使用 Element Plus 组件库
+5. 查看浏览器控制台调试
 
 ## 总结
 
-AIGen Studio 第一阶段开发已完成，实现了需求管理、IR 编辑、代码生成和产出物管理等核心功能。项目架构清晰，代码质量良好，文档完善，可以作为后续功能扩展的基础。
+AIGen Studio 已实现从需求理解、代码生成到实时预览的完整开发流程。项目采用对话驱动的开发模式，通过 iFlow SDK 实现了 AI 代码生成能力，并提供了完善的前后端服务管理和代码编辑功能。
 
-项目采用现代化的技术栈，前后端分离架构，易于维护和扩展。所有核心功能均已实现并通过验证，可以进入第二阶段的开发和优化工作。
+项目架构清晰，代码质量良好，文档完善，可以作为一个功能完整的 AI 驱动开发平台使用。

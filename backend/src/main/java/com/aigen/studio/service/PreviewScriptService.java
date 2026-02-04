@@ -28,13 +28,22 @@ public class PreviewScriptService {
         }
 
         Path scriptPath = frontendDir.resolve(SCRIPT_RELATIVE_PATH);
+        String desiredContent = buildScriptContent();
         if (Files.exists(scriptPath)) {
+            try {
+                String existing = Files.readString(scriptPath);
+                if (!existing.contains("exec npm run dev")) {
+                    Files.writeString(scriptPath, desiredContent);
+                }
+            } catch (IOException e) {
+                log.warn("Failed to update preview start script at {}", scriptPath, e);
+            }
             return scriptPath;
         }
 
         try {
             Files.createDirectories(scriptPath.getParent());
-            Files.writeString(scriptPath, buildScriptContent());
+            Files.writeString(scriptPath, desiredContent);
             return scriptPath;
         } catch (IOException e) {
             log.warn("Failed to create preview start script at {}", scriptPath, e);
@@ -69,7 +78,7 @@ public class PreviewScriptService {
                 "set -e",
                 "PORT=${1:-3002}",
                 "BASE_PATH=${2:-/__preview__/}",
-                "npm run dev -- --port \"$PORT\" --strictPort --base \"$BASE_PATH\"",
+                "exec npm run dev -- --port \"$PORT\" --strictPort --base \"$BASE_PATH\"",
                 ""
         );
     }

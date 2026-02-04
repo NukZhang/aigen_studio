@@ -29,6 +29,7 @@ public class PreviewService {
     private final ConversationRepository conversationRepository;
     private final ProcessLauncher processLauncher;
     private final PreviewScriptService previewScriptService;
+    private final ProcessTerminator processTerminator;
 
     private final Object lock = new Object();
     private PreviewSession activeSession;
@@ -47,6 +48,8 @@ public class PreviewService {
             if (activeSession != null && activeSession.conversationId.equals(conversationId)) {
                 return buildStatus(conversationId, config, activeSession.frontendProcess, activeSession.backendProcess, null);
             }
+
+            stopOrphanedProcesses(conversationId);
 
             Process frontendProcess = null;
             String frontendMessage = null;
@@ -85,6 +88,8 @@ public class PreviewService {
                 stopSession(activeSession);
                 activeSession = null;
             }
+
+            stopOrphanedProcesses(conversationId);
 
             Conversation conversation = loadConversation(conversationId);
             conversation.setStage(ConversationStage.READY_TO_START);
@@ -130,6 +135,7 @@ public class PreviewService {
         List<String> command = buildFrontendCommand(scriptPath, port);
         Path logFile = getLogFile(conversationId, "frontend");
         Process process = startProcess(frontendDir, command, conversationId, "Frontend", logFile);
+        writePidFile(conversationId, "frontend", process);
         return new FrontendStartResult(process, null);
     }
 
@@ -152,7 +158,9 @@ public class PreviewService {
         }
         
         Path logFile = getLogFile(conversationId, "backend");
-        return startProcess(backendDir, command, conversationId, "Backend", logFile);
+        Process process = startProcess(backendDir, command, conversationId, "Backend", logFile);
+        writePidFile(conversationId, "backend", process);
+        return process;
     }
 
     /**
@@ -209,6 +217,16 @@ public class PreviewService {
             log.error("Failed to create data directory", e);
         }
         return dataDir.resolve("preview-" + conversationId + "-" + service + ".log");
+    }
+
+    private Path getPidFile(Long conversationId, String service) {
+        Path dataDir = Paths.get("data").toAbsolutePath();
+        try {
+            Files.createDirectories(dataDir);
+        } catch (IOException e) {
+            log.error("Failed to create data directory", e);
+        }
+        return dataDir.resolve("preview-" + conversationId + "-" + service + ".pid");
     }
 
     private List<String> buildFrontendCommand(Path scriptPath, int port) {
@@ -370,16 +388,25 @@ public class PreviewService {
     }
 
     /**
-     * 检查指定端口是否被占用
-     * 通过尝试创建 ServerSocket 来检测端口是否可用
+     * 检查指定端口是否被占用。
+     * 通过尝试连接 IPv4/IPv6 回环地址，避免仅 IPv6 监听时误判端口未占用。
      */
     private boolean isPortInUse(int port) {
-        try (java.net.ServerSocket socket = new java.net.ServerSocket(port)) {
-            // 如果能成功绑定端口，说明端口未被占用
-            return false;
-        } catch (IOException e) {
-            // 如果绑定失败，说明端口已被占用
+        if (canConnect("127.0.0.1", port)) {
             return true;
+        }
+        if (canConnect("::1", port)) {
+            return true;
+        }
+        return false;
+    }
+
+    private boolean canConnect(String host, int port) {
+        try (java.net.Socket socket = new java.net.Socket()) {
+            socket.connect(new java.net.InetSocketAddress(host, port), 200);
+            return true;
+        } catch (IOException e) {
+            return false;
         }
     }
 
@@ -411,7 +438,65 @@ public class PreviewService {
 
     private void stopProcess(Process process) {
         if (process != null && process.isAlive()) {
-            process.destroy();
+            try {
+                process.destroy();
+                if (process.isAlive()) {
+                    process.destroyForcibly();
+                }
+            } catch (RuntimeException e) {
+                log.warn("Failed to destroy preview process", e);
+            }
+        }
+    }
+
+    private void stopOrphanedProcesses(Long conversationId) {
+        stopProcessByPid(conversationId, "frontend");
+        stopProcessByPid(conversationId, "backend");
+    }
+
+    private void stopProcessByPid(Long conversationId, String service) {
+        Path pidFile = getPidFile(conversationId, service);
+        if (!Files.exists(pidFile)) {
+            return;
+        }
+
+        Long pid = readPid(pidFile);
+        if (pid != null) {
+            boolean terminated = processTerminator.terminate(pid);
+            if (!terminated) {
+                log.warn("Failed to terminate {} process for conversation {} (pid={})", service, conversationId, pid);
+            }
+        }
+
+        try {
+            Files.deleteIfExists(pidFile);
+        } catch (IOException e) {
+            log.warn("Failed to remove pid file {}", pidFile, e);
+        }
+    }
+
+    private Long readPid(Path pidFile) {
+        try {
+            String raw = Files.readString(pidFile).trim();
+            if (raw.isBlank()) {
+                return null;
+            }
+            return Long.parseLong(raw);
+        } catch (IOException | NumberFormatException e) {
+            log.warn("Failed to read pid file {}", pidFile, e);
+            return null;
+        }
+    }
+
+    private void writePidFile(Long conversationId, String service, Process process) {
+        if (process == null) {
+            return;
+        }
+        Path pidFile = getPidFile(conversationId, service);
+        try {
+            Files.writeString(pidFile, String.valueOf(process.pid()));
+        } catch (IOException e) {
+            log.warn("Failed to write pid file {}", pidFile, e);
         }
     }
 

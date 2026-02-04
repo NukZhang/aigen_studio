@@ -1,23 +1,24 @@
 package com.aigen.studio.service;
 
-import cn.iflow.sdk.core.IFlowClient;
-import cn.iflow.sdk.types.messages.*;
+import com.aigen.studio.sdk.ICodingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.nio.file.Path;
 import java.util.function.Consumer;
 
 /**
- * iFlow 任务服务
+ * Prompt 任务服务
  * 提供具体的任务执行逻辑，如需求理解、代码生成等
+ * 通过 ICodingService 接口与 SDK 交互，不依赖具体的 SDK 实现
  */
 @Service
 @RequiredArgsConstructor
 @Slf4j
-public class IFlowTaskService {
+public class PromptTaskService {
 
-    private final IFlowClientHelper clientHelper;
+    private final ICodingService codingService;
 
     /**
      * 理解需求
@@ -26,34 +27,29 @@ public class IFlowTaskService {
         log.info("Understanding requirement: {}", userRequirement);
 
         StringBuilder result = new StringBuilder();
+        Path tempDir = Path.of(System.getProperty("java.io.tmpdir"));
 
-        long timeout = 300000; // 5 分钟超时
-        IFlowClient client = clientHelper.createClient(
-                java.nio.file.Path.of(System.getProperty("java.io.tmpdir")),
-                timeout
-        );
-
-        IFlowClientHelper.IFlowMessageHandler handler = new IFlowClientHelper.IFlowMessageHandler() {
+        // 创建消息处理器
+        ICodingService.MessageHandler handler = new ICodingService.MessageHandler() {
             @Override
-            public void onAssistantMessage(AssistantMessage message) {
-                String text = message.getChunk().getText();
+            public void onAssistantMessage(String text) {
                 result.append(text);
                 log.info("Understanding: {}", text);
             }
 
             @Override
-            public void onToolCallMessage(ToolCallMessage message) {
-                log.info("Tool: {}", message.getLabel());
+            public void onToolCall(String toolName, String status) {
+                log.info("Tool: {} - {}", toolName, status);
             }
 
             @Override
-            public void onToolResultMessage(ToolResultMessage message) {
-                log.info("Tool Result: {}", message.getContent());
+            public void onToolResult(String content) {
+                log.info("Tool Result: {}", content);
             }
 
             @Override
-            public void onTaskFinishMessage(TaskFinishMessage message) {
-                log.info("Understanding finished: {}", message.getStopReason());
+            public void onTaskFinish(String stopReason) {
+                log.info("Understanding finished: {}", stopReason);
             }
 
             @Override
@@ -69,7 +65,7 @@ public class IFlowTaskService {
         };
 
         String taskPrompt = buildUnderstandingPrompt(userRequirement);
-        clientHelper.executeTask(client, taskPrompt, handler, timeout);
+        codingService.executeTask(taskPrompt, tempDir, handler);
 
         return result.toString();
     }
@@ -79,18 +75,54 @@ public class IFlowTaskService {
      */
     public void generateCode(
             String irContent,
-            java.nio.file.Path outputPath,
+            Path outputPath,
             Consumer<String> logConsumer
     ) {
         log.info("Generating code to: {}", outputPath);
 
-        long timeout = 300000; // 5 分钟超时
-        IFlowClient client = clientHelper.createClient(outputPath, timeout);
+        // 创建日志处理器
+        ICodingService.MessageHandler handler = new ICodingService.MessageHandler() {
+            @Override
+            public void onAssistantMessage(String text) {
+                log("Assistant: " + text);
+            }
 
-        IFlowClientHelper.IFlowMessageHandler handler = new IFlowClientHelper.LoggingHandler(logConsumer);
+            @Override
+            public void onToolCall(String toolName, String status) {
+                log("Tool: " + toolName + " - " + status);
+            }
+
+            @Override
+            public void onToolResult(String content) {
+                log("Tool Result: " + content);
+            }
+
+            @Override
+            public void onTaskFinish(String stopReason) {
+                log("Task finished: " + stopReason);
+            }
+
+            @Override
+            public void onError(Throwable error) {
+                log("ERROR: " + error.getMessage());
+            }
+
+            @Override
+            public void onComplete() {
+                log("Task completed");
+            }
+
+            private void log(String message) {
+                if (logConsumer != null) {
+                    logConsumer.accept(message);
+                } else {
+                    System.out.println(message);
+                }
+            }
+        };
 
         String taskPrompt = buildCodeGenerationPrompt(irContent, outputPath);
-        clientHelper.executeTask(client, taskPrompt, handler, timeout);
+        codingService.executeTask(taskPrompt, outputPath, handler);
 
         log.info("Code generation completed");
     }
@@ -119,7 +151,7 @@ public class IFlowTaskService {
     /**
      * 构建代码生成提示词
      */
-    private String buildCodeGenerationPrompt(String irContent, java.nio.file.Path outputPath) {
+    private String buildCodeGenerationPrompt(String irContent, Path outputPath) {
         return String.format("""
             请根据以下 IR 配置生成完整的代码项目：
 
@@ -141,6 +173,15 @@ public class IFlowTaskService {
                - frontend/vite.config.(ts|js)（含 Vue 插件；路由需 createWebHistory(import.meta.env.BASE_URL)）
                - frontend/package.json（含 dev/build/preview 脚本和依赖）
             9. 若暂时没有业务页面，也必须生成上述入口文件，不要只创建目录或空 src。
+            10. 后端使用 Spring Boot 3.x 时，必须使用 jakarta.servlet.*，不要使用 javax.servlet.*。
+            11. 如果使用 MyBatis-Plus，每个实体都要有对应的 Mapper 接口文件。
+            12. 后端必须生成 schema.sql，且该脚本必须兼容 H2（预览默认使用 H2）：
+                - 禁止使用 CREATE DATABASE、USE 等数据库级语句
+                - 禁止使用 ENGINE=、CHARSET、COLLATE 等 MySQL 专属语法
+                - 禁止在 CREATE TABLE 中使用 KEY/UNIQUE KEY；索引请使用 CREATE INDEX/CREATE UNIQUE INDEX 单独创建
+                - 表必须使用 CREATE TABLE IF NOT EXISTS
+                - 尽量使用通用数据类型（INT/BIGINT/VARCHAR/TEXT/DECIMAL/DATE/DATETIME）
+            13. 如果后端使用 H2 作为默认开发数据库，application.yml 中请设置 spring.sql.init.mode=embedded。
 
             输出目录：%s
 

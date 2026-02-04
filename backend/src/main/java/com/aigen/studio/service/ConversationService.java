@@ -28,7 +28,7 @@ public class ConversationService {
 
     private final ConversationRepository conversationRepository;
     private final MessageRepository messageRepository;
-    private final IFlowTaskService iFlowTaskService;
+    private final PromptTaskService promptTaskService;
     private final PreviewScriptService previewScriptService;
 
     @Value("${iflow.sdk.output-dir:./output}")
@@ -136,8 +136,8 @@ public class ConversationService {
             // 生成 IR 内容（简化版本）
             String irContent = generateIRContent(conversation);
 
-            // 使用 IFlowTaskService 生成代码
-            iFlowTaskService.generateCode(irContent, outputPath, message -> {
+            // 使用 PromptTaskService 生成代码
+            promptTaskService.generateCode(irContent, outputPath, message -> {
                 log.info("Code generation log: {}", message);
                 // 保存进度消息到消息表
                 sendProgressMessage(conversationId, message, "system");
@@ -328,7 +328,7 @@ public class ConversationService {
         try {
             // 调用 iFlow SDK 理解需求
             log.info("Understanding requirement for conversation: {}", conversation.getId());
-            String aiUnderstanding = iFlowTaskService.understandRequirement(conversation.getUserRequirement());
+            String aiUnderstanding = promptTaskService.understandRequirement(conversation.getUserRequirement());
             conversation.setAiUnderstanding(aiUnderstanding);
             conversation.setStage(ConversationStage.UNDERSTANDING_CONFIRMED);
             conversationRepository.save(conversation);
@@ -359,7 +359,7 @@ public class ConversationService {
         try {
             // 重新理解需求
             log.info("Re-understanding requirement for conversation: {}", conversation.getId());
-            String aiUnderstanding = iFlowTaskService.understandRequirement(updatedRequirement);
+            String aiUnderstanding = promptTaskService.understandRequirement(updatedRequirement);
             conversation.setAiUnderstanding(aiUnderstanding);
             conversation.setStage(ConversationStage.UNDERSTANDING_CONFIRMED);
             conversationRepository.save(conversation);

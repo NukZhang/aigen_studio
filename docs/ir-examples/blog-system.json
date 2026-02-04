@@ -1,0 +1,337 @@
+{
+  "projectName": "BlogSystem",
+  "description": "基于 Vue 3 和 Spring Boot 的博客系统，支持文章发布、评论、标签管理",
+  "version": "1.0.0",
+
+  "techStack": {
+    "frontend": {
+      "framework": "vue3",
+      "version": "3.4.0",
+      "language": "typescript",
+      "languageVersion": "5.3",
+      "buildTool": "vite",
+      "buildToolVersion": "5.0",
+      "uiLibrary": "element-plus",
+      "uiLibraryVersion": "2.4",
+      "stateManagement": "pinia",
+      "stateManagementVersion": "2.1",
+      "router": "vue-router",
+      "routerVersion": "4.2",
+      "httpClient": "axios",
+      "httpClientVersion": "1.6",
+      "markdown": "marked",
+      "markdownVersion": "9.0"
+    },
+    "backend": {
+      "framework": "springboot",
+      "version": "3.2.0",
+      "language": "java",
+      "languageVersion": "17",
+      "buildTool": "maven",
+      "buildToolVersion": "3.8",
+      "dataAccess": "spring-data-jpa",
+      "database": "mysql",
+      "databaseVersion": "8.0",
+      "security": "spring-security",
+      "apiDocumentation": "openapi",
+      "apiDocumentationVersion": "3.0",
+      "logging": "slf4j",
+      "testing": "junit5"
+    }
+  },
+
+  "architecture": {
+    "frontend": {
+      "structure": {
+        "src/views": "页面组件",
+        "src/components": "可复用组件",
+        "src/api": "API 服务层",
+        "src/router": "路由配置",
+        "src/stores": "状态管理（Pinia）",
+        "src/types": "TypeScript 类型定义",
+        "src/utils": "工具函数",
+        "src/assets": "静态资源"
+      },
+      "conventions": {
+        "componentNaming": "PascalCase",
+        "fileNaming": "kebab-case",
+        "apiNaming": "camelCase",
+        "typeNaming": "PascalCase",
+        "useCompositionApi": true,
+        "useTypeScript": true
+      }
+    },
+    "backend": {
+      "structure": {
+        "src/main/java/com/blog/system": {
+          "controller": "REST API 控制器层",
+          "service": "业务逻辑层",
+          "repository": "数据访问层",
+          "entity": "实体类",
+          "dto": "数据传输对象",
+          "config": "配置类",
+          "security": "安全配置"
+        },
+        "src/main/resources": {
+          "application.yml": "主配置文件",
+          "application-dev.yml": "开发环境配置",
+          "application-prod.yml": "生产环境配置"
+        }
+      },
+      "layering": {
+        "controller": "接收 HTTP 请求，返回响应",
+        "service": "业务逻辑处理",
+        "repository": "数据库操作",
+        "entity": "数据模型",
+        "dto": "数据传输"
+      },
+      "conventions": {
+        "classNaming": "PascalCase",
+        "methodNaming": "camelCase",
+        "fieldNaming": "camelCase",
+        "constantNaming": "UPPER_SNAKE_CASE",
+        "packageNaming": "lowercase",
+        "useLombok": true,
+        "useJpa": true
+      }
+    }
+  },
+
+  "modules": [
+    {
+      "name": "frontend",
+      "type": "vue3",
+      "path": "frontend",
+      "features": [
+        "article-list",
+        "article-detail",
+        "article-create",
+        "article-edit",
+        "article-delete",
+        "comment-system",
+        "tag-management",
+        "category-management",
+        "markdown-editor",
+        "search-functionality"
+      ],
+      "dependencies": {
+        "vue": "^3.4.0",
+        "vue-router": "^4.2.0",
+        "pinia": "^2.1.0",
+        "element-plus": "^2.4.0",
+        "axios": "^1.6.0",
+        "marked": "^9.0.0",
+        "typescript": "^5.3.0",
+        "vite": "^5.0.0"
+      },
+      "scripts": {
+        "dev": "vite",
+        "build": "vue-tsc && vite build",
+        "preview": "vite preview"
+      }
+    },
+    {
+      "name": "backend",
+      "type": "springboot",
+      "path": "backend",
+      "features": [
+        "article-crud",
+        "comment-crud",
+        "tag-management",
+        "category-management",
+        "user-authentication",
+        "rest-api",
+        "data-persistence",
+        "api-documentation",
+        "authentication",
+        "authorization"
+      ],
+      "dependencies": {
+        "spring-boot-starter-web": "3.2.0",
+        "spring-boot-starter-data-jpa": "3.2.0",
+        "spring-boot-starter-security": "3.2.0",
+        "spring-boot-starter-validation": "3.2.0",
+        "springdoc-openapi-starter-webmvc-ui": "2.3.0",
+        "mysql-connector-j": "8.2.0",
+        "lombok": "1.18.30",
+        "jackson-databind": "2.16.0"
+      },
+      "scripts": {
+        "build": "mvn clean package",
+        "test": "mvn test",
+        "run": "mvn spring-boot:run"
+      }
+    }
+  ],
+
+  "database": {
+    "type": "mysql",
+    "location": "localhost:3306",
+    "schema": "blog",
+    "encoding": "UTF-8",
+    "tables": [
+      {
+        "name": "users",
+        "description": "用户表",
+        "fields": [
+          {"name": "id", "type": "BIGINT", "primaryKey": true, "autoIncrement": true},
+          {"name": "username", "type": "VARCHAR(50)", "nullable": false, "unique": true},
+          {"name": "email", "type": "VARCHAR(100)", "nullable": false, "unique": true},
+          {"name": "password", "type": "VARCHAR(255)", "nullable": false},
+          {"name": "nickname", "type": "VARCHAR(50)"},
+          {"name": "avatar", "type": "VARCHAR(255)"},
+          {"name": "role", "type": "VARCHAR(20)", "defaultValue": "USER"},
+          {"name": "created_at", "type": "TIMESTAMP", "nullable": false, "updatable": false},
+          {"name": "updated_at", "type": "TIMESTAMP"}
+        ]
+      },
+      {
+        "name": "articles",
+        "description": "文章表",
+        "fields": [
+          {"name": "id", "type": "BIGINT", "primaryKey": true, "autoIncrement": true},
+          {"name": "title", "type": "VARCHAR(255)", "nullable": false},
+          {"name": "content", "type": "TEXT", "nullable": false},
+          {"name": "summary", "type": "VARCHAR(500)"},
+          {"name": "cover_image", "type": "VARCHAR(255)"},
+          {"name": "author_id", "type": "BIGINT", "foreignKey": "users.id", "nullable": false},
+          {"name": "category_id", "type": "BIGINT"},
+          {"name": "view_count", "type": "INT", "defaultValue": "0"},
+          {"name": "like_count", "type": "INT", "defaultValue": "0"},
+          {"name": "comment_count", "type": "INT", "defaultValue": "0"},
+          {"name": "status", "type": "VARCHAR(20)", "defaultValue": "DRAFT"},
+          {"name": "created_at", "type": "TIMESTAMP", "nullable": false, "updatable": false},
+          {"name": "updated_at", "type": "TIMESTAMP"},
+          {"name": "published_at", "type": "TIMESTAMP"}
+        ]
+      },
+      {
+        "name": "comments",
+        "description": "评论表",
+        "fields": [
+          {"name": "id", "type": "BIGINT", "primaryKey": true, "autoIncrement": true},
+          {"name": "article_id", "type": "BIGINT", "foreignKey": "articles.id", "nullable": false},
+          {"name": "user_id", "type": "BIGINT", "foreignKey": "users.id", "nullable": false},
+          {"name": "parent_id", "type": "BIGINT", "foreignKey": "comments.id"},
+          {"name": "content", "type": "TEXT", "nullable": false},
+          {"name": "like_count", "type": "INT", "defaultValue": "0"},
+          {"name": "created_at", "type": "TIMESTAMP", "nullable": false, "updatable": false},
+          {"name": "updated_at", "type": "TIMESTAMP"}
+        ]
+      },
+      {
+        "name": "tags",
+        "description": "标签表",
+        "fields": [
+          {"name": "id", "type": "BIGINT", "primaryKey": true, "autoIncrement": true},
+          {"name": "name", "type": "VARCHAR(50)", "nullable": false, "unique": true},
+          {"name": "slug", "type": "VARCHAR(50)", "nullable": false, "unique": true},
+          {"name": "description", "type": "VARCHAR(255)"},
+          {"name": "created_at", "type": "TIMESTAMP", "nullable": false, "updatable": false}
+        ]
+      },
+      {
+        "name": "categories",
+        "description": "分类表",
+        "fields": [
+          {"name": "id", "type": "BIGINT", "primaryKey": true, "autoIncrement": true},
+          {"name": "name", "type": "VARCHAR(50)", "nullable": false, "unique": true},
+          {"name": "slug", "type": "VARCHAR(50)", "nullable": false, "unique": true},
+          {"name": "description", "type": "VARCHAR(255)"},
+          {"name": "parent_id", "type": "BIGINT", "foreignKey": "categories.id"},
+          {"name": "sort_order", "type": "INT", "defaultValue": "0"},
+          {"name": "created_at", "type": "TIMESTAMP", "nullable": false, "updatable": false}
+        ]
+      }
+    ],
+    "jpaConfig": {
+      "ddlAuto": "update",
+      "showSql": false,
+      "formatSql": false,
+      "dialect": "org.hibernate.dialect.MySQLDialect"
+    }
+  },
+
+  "deployment": {
+    "ports": {
+      "frontend": 3000,
+      "backend": 8080,
+      "database": 3306
+    },
+    "environmentVariables": {
+      "required": [
+        {"name": "DB_HOST", "description": "数据库主机"},
+        {"name": "DB_PORT", "description": "数据库端口"},
+        {"name": "DB_NAME", "description": "数据库名称"},
+        {"name": "DB_USERNAME", "description": "数据库用户名"},
+        {"name": "DB_PASSWORD", "description": "数据库密码"}
+      ],
+      "optional": [
+        {"name": "SPRING_PROFILES_ACTIVE", "default": "dev", "description": "Spring 配置文件"},
+        {"name": "JWT_SECRET", "description": "JWT 密钥"}
+      ]
+    },
+    "docker": {
+      "enabled": true,
+      "compose": true
+    },
+    "nginx": {
+      "enabled": true,
+      "config": "/etc/nginx/sites-available/blog"
+    }
+  },
+
+  "conventions": {
+    "api": {
+      "rest": {
+        "baseUrl": "/api",
+        "versioning": "none",
+        "responseFormat": "JSON",
+        "errorHandling": "HTTP status codes"
+      },
+      "naming": {
+        "endpoints": "kebab-case",
+        "queryParams": "camelCase"
+      }
+    },
+    "logging": {
+      "level": "INFO",
+      "format": "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n",
+      "file": {
+        "enabled": true,
+        "path": "./logs/application.log",
+        "maxSize": "100MB",
+        "maxHistory": 30
+      }
+    },
+    "security": {
+      "cors": {
+        "enabled": true,
+        "allowedOrigins": ["http://localhost:3000"],
+        "allowedMethods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allowedHeaders": ["*"]
+      },
+      "authentication": {
+        "type": "jwt",
+        "enabled": true
+      }
+    },
+    "validation": {
+      "inputValidation": true,
+      "outputValidation": false
+    }
+  },
+
+  "scripts": {
+    "development": {
+      "start": "scripts/start-all.sh",
+      "startBackend": "scripts/start-backend.sh",
+      "startFrontend": "scripts/start-frontend.sh"
+    },
+    "production": {
+      "buildBackend": "cd backend && mvn clean package -DskipTests",
+      "buildFrontend": "cd frontend && npm run build",
+      "startBackend": "java -jar backend/target/app.jar --spring.profiles.active=prod"
+    }
+  }
+}

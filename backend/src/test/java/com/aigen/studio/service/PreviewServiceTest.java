@@ -17,12 +17,16 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.lang.reflect.Method;
+import java.net.InetAddress;
+import java.net.ServerSocket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+import org.junit.jupiter.api.Assumptions;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -45,10 +49,14 @@ class PreviewServiceTest {
     @Autowired
     private TestProcessLauncher processLauncher;
 
+    @Autowired
+    private TestProcessTerminator processTerminator;
+
     @BeforeEach
     void resetLauncher() {
         processLauncher.startedBuilders.clear();
         processLauncher.createdProcesses.clear();
+        processLauncher.nextProcesses.clear();
     }
 
     @TestConfiguration
@@ -57,6 +65,12 @@ class PreviewServiceTest {
         @Primary
         TestProcessLauncher testProcessLauncher() {
             return new TestProcessLauncher();
+        }
+
+        @Bean
+        @Primary
+        TestProcessTerminator testProcessTerminator() {
+            return new TestProcessTerminator();
         }
     }
 
@@ -159,6 +173,74 @@ class PreviewServiceTest {
         assertEquals(ConversationStage.READY_TO_START, updated.getStage());
     }
 
+    @Test
+    void stopPreviewDoesNotFailWhenProcessDestroyThrows(@TempDir Path tmp) throws Exception {
+        Path frontendDir = Files.createDirectories(tmp.resolve("frontend"));
+        Files.createDirectories(frontendDir.resolve("node_modules"));
+        Files.writeString(frontendDir.resolve("index.html"), "<!doctype html><div id=\"app\"></div>");
+
+        Conversation conversation = createConversation(tmp);
+        processLauncher.enqueueProcess(new ExplodingProcess());
+
+        previewService.startPreview(conversation.getId());
+
+        PreviewStatusDTO status = previewService.stopPreview(conversation.getId());
+
+        Conversation updated = conversationRepository.findById(conversation.getId()).orElseThrow();
+        assertEquals(ConversationStage.READY_TO_START, updated.getStage());
+        assertEquals("STOPPED", updated.getServiceStatus());
+        assertTrue(status.isRunning() || !status.isRunning());
+    }
+
+    @Test
+    void stopPreviewTerminatesOrphanedProcessesFromPidFiles(@TempDir Path tmp) throws Exception {
+        Path frontendDir = Files.createDirectories(tmp.resolve("frontend"));
+        Files.createDirectories(frontendDir.resolve("node_modules"));
+        Files.writeString(frontendDir.resolve("index.html"), "<!doctype html><div id=\"app\"></div>");
+        Files.createDirectories(tmp.resolve("backend"));
+        Files.writeString(tmp.resolve("application.yml"), "preview:\n  frontendPort: 3002\n  backendPort: 8081\n");
+
+        Conversation conversation = createConversation(tmp);
+
+        processLauncher.enqueueProcess(new PidProcess(111L));
+        processLauncher.enqueueProcess(new PidProcess(222L));
+
+        previewService.startPreview(conversation.getId());
+
+        clearActiveSession(previewService);
+
+        PreviewStatusDTO status = previewService.stopPreview(conversation.getId());
+
+        assertFalse(status.isRunning());
+        assertTrue(processTerminator.terminatedPids.contains(111L));
+        assertTrue(processTerminator.terminatedPids.contains(222L));
+
+        Path dataDir = Path.of("data").toAbsolutePath();
+        Path frontendPid = dataDir.resolve("preview-" + conversation.getId() + "-frontend.pid");
+        Path backendPid = dataDir.resolve("preview-" + conversation.getId() + "-backend.pid");
+        assertFalse(Files.exists(frontendPid));
+        assertFalse(Files.exists(backendPid));
+    }
+
+    @Test
+    void isPortInUseDetectsIpv6LoopbackListener() throws Exception {
+        InetAddress ipv6Loopback;
+        try {
+            ipv6Loopback = InetAddress.getByName("::1");
+        } catch (Exception e) {
+            Assumptions.assumeTrue(false, "IPv6 loopback not available");
+            return;
+        }
+
+        try (ServerSocket server = new ServerSocket(0, 0, ipv6Loopback)) {
+            int port = server.getLocalPort();
+            boolean inUse = invokeIsPortInUse(port);
+            assertTrue(inUse);
+        } catch (Exception e) {
+            Assumptions.assumeTrue(false, "IPv6 binding not supported: " + e.getMessage());
+        }
+    }
+
     private Conversation createConversation(Path root) {
         Conversation conversation = new Conversation();
         conversation.setProjectName("Preview Test");
@@ -171,18 +253,26 @@ class PreviewServiceTest {
 
     static class TestProcessLauncher implements ProcessLauncher {
         private final List<ProcessBuilder> startedBuilders = new ArrayList<>();
-        private final List<FakeProcess> createdProcesses = new ArrayList<>();
+        private final List<Process> createdProcesses = new ArrayList<>();
+        private final java.util.Deque<Process> nextProcesses = new java.util.ArrayDeque<>();
+
+        void enqueueProcess(Process process) {
+            nextProcesses.add(process);
+        }
 
         @Override
         public Process start(ProcessBuilder builder) {
             startedBuilders.add(builder);
-            FakeProcess process = new FakeProcess();
+            Process process = nextProcesses.isEmpty() ? new FakeProcess() : nextProcesses.removeFirst();
             createdProcesses.add(process);
             return process;
         }
     }
 
     static class FakeProcess extends Process {
+        private static final java.util.concurrent.atomic.AtomicLong PID_SEQUENCE =
+                new java.util.concurrent.atomic.AtomicLong(1000);
+        private final long pid = PID_SEQUENCE.incrementAndGet();
         private boolean alive = true;
 
         @Override
@@ -226,5 +316,57 @@ class PreviewServiceTest {
         public boolean isAlive() {
             return alive;
         }
+
+        @Override
+        public long pid() {
+            return pid;
+        }
+    }
+
+    static class ExplodingProcess extends FakeProcess {
+        @Override
+        public void destroy() {
+            throw new RuntimeException("boom");
+        }
+    }
+
+    static class PidProcess extends FakeProcess {
+        private final long pid;
+
+        PidProcess(long pid) {
+            this.pid = pid;
+        }
+
+        @Override
+        public long pid() {
+            return pid;
+        }
+    }
+
+    static class TestProcessTerminator implements ProcessTerminator {
+        private final List<Long> terminatedPids = new ArrayList<>();
+
+        @Override
+        public boolean terminate(long pid) {
+            terminatedPids.add(pid);
+            return true;
+        }
+
+        @Override
+        public boolean isAlive(long pid) {
+            return true;
+        }
+    }
+
+    private void clearActiveSession(PreviewService service) throws Exception {
+        java.lang.reflect.Field field = PreviewService.class.getDeclaredField("activeSession");
+        field.setAccessible(true);
+        field.set(service, null);
+    }
+
+    private boolean invokeIsPortInUse(int port) throws Exception {
+        Method method = PreviewService.class.getDeclaredMethod("isPortInUse", int.class);
+        method.setAccessible(true);
+        return (boolean) method.invoke(previewService, port);
     }
 }

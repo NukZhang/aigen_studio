@@ -142,17 +142,100 @@
 
       <!-- 输入框 -->
       <div class="chat-input">
-        <el-input
-          v-model="inputMessage"
-          type="textarea"
-          :rows="3"
-          placeholder="输入你的需求，让 AI 帮助你开发应用..."
-          @keydown.enter.prevent="conversationId && sendMessage()"
-        />
-        <el-button type="primary" @click="sendMessage" :loading="isSending" :disabled="!conversationId">
-          <el-icon><Promotion /></el-icon>
-          发送
-        </el-button>
+        <div class="input-container">
+          <el-input
+            v-model="inputMessage"
+            type="textarea"
+            :rows="3"
+            placeholder="输入你的需求，让 AI 帮助你开发应用..."
+            @keydown.enter.prevent="conversationId && sendMessage()"
+            class="message-input"
+          />
+
+          <div class="uploaded-files" v-if="uploadedFiles.length > 0">
+            <div v-for="(file, index) in uploadedFiles" :key="index" class="file-item">
+              <el-icon><Document /></el-icon>
+              <span class="file-name">{{ file.name }}</span>
+              <el-button
+                class="file-remove"
+                link
+                type="danger"
+                @click="removeUploadedFile(index)"
+              >
+                <el-icon><Close /></el-icon>
+              </el-button>
+            </div>
+          </div>
+
+          <div class="input-footer">
+            <div class="input-footer-left">
+              <el-dropdown trigger="click" @command="handleModelChange" v-if="availableModels.length > 0 && selectedModel">
+                <div class="model-selector">
+                  <div class="model-icon">
+                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" fill="#FF6B35"/>
+                    </svg>
+                  </div>
+                  <span class="model-name">{{ selectedModel.name }}</span>
+                  <el-icon class="dropdown-icon"><ArrowDown /></el-icon>
+                </div>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item
+                      v-for="model in availableModels"
+                      :key="model.id"
+                      :command="model.id"
+                      :class="{ 'is-active': selectedModel.id === model.id }"
+                    >
+                      <div class="model-option">
+                        <div class="model-option-icon">
+                          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" fill="#FF6B35"/>
+                          </svg>
+                        </div>
+                        <div class="model-option-info">
+                          <div class="model-option-name">{{ model.name }}</div>
+                          <div class="model-option-desc">{{ model.description }}</div>
+                        </div>
+                      </div>
+                    </el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+              <div v-else-if="isLoadingModels" class="model-selector model-selector-loading">
+                <el-icon class="is-loading"><Loading /></el-icon>
+                <span class="model-name">加载中...</span>
+              </div>
+            </div>
+            <div class="input-footer-right">
+              <el-upload
+                ref="uploadRef"
+                :auto-upload="false"
+                :show-file-list="false"
+                :on-change="handleFileChange"
+                accept="image/*,.pdf,.doc,.docx,.txt"
+              >
+                <el-button class="action-btn" circle size="small" title="上传附件">
+                  <el-icon><Paperclip /></el-icon>
+                </el-button>
+              </el-upload>
+              <el-button class="action-btn" circle size="small" title="语音输入">
+                <el-icon><Microphone /></el-icon>
+              </el-button>
+              <el-button
+                type="primary"
+                class="send-btn"
+                @click="sendMessage"
+                :loading="isSending"
+                :disabled="!conversationId || !inputMessage.trim()"
+                circle
+                size="small"
+              >
+                <el-icon v-if="!isSending"><Promotion /></el-icon>
+              </el-button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -269,10 +352,15 @@ import {
   Upload,
   VideoPlay,
   Reading,
-  Document
+  Document,
+  ArrowDown,
+  Paperclip,
+  Microphone,
+  Close,
+  Loading
 } from '@element-plus/icons-vue'
 import { marked } from 'marked'
-import { conversationApi, previewApi, type FileNode } from '../api/job'
+import { conversationApi, previewApi, modelApi, type FileNode, type Model } from '../api/job'
 import { getTutorialTree, getTutorialContent, type TutorialNode } from '../api/tutorial'
 import FileBrowser from './FileBrowser.vue'
 import CodeEditor from './CodeEditor.vue'
@@ -330,6 +418,37 @@ const headingTreeProps = {
   label: 'text'
 }
 const autoRefreshTimer = ref<number | null>(null)
+
+// 模型选择相关
+const availableModels = ref<Model[]>([])
+const selectedModel = ref<Model | null>(null)
+
+// 加载模型列表
+const isLoadingModels = ref(true)
+const loadModels = async () => {
+  isLoadingModels.value = true
+  try {
+    const response = await modelApi.getAvailableModels()
+    availableModels.value = response.data
+    // 如果有模型列表，选择默认模型
+    if (response.data && response.data.length > 0) {
+      const defaultModel = response.data.find(m => m.isDefault)
+      selectedModel.value = defaultModel || response.data[0]
+    } else {
+      // 没有模型列表时，selectedModel 为 null
+      selectedModel.value = null
+    }
+  } catch (error) {
+    console.error('Failed to load models:', error)
+    // 加载失败时，不显示任何模型
+    availableModels.value = []
+    selectedModel.value = null
+  } finally {
+    isLoadingModels.value = false
+  }
+}
+const uploadRef = ref()
+const uploadedFiles = ref<File[]>([])
 const isLoadingConversation = ref(false)
 const AUTO_REFRESH_INTERVAL = 3000
 const conversationFileStages = new Set([
@@ -437,6 +556,9 @@ onMounted(async () => {
 
   // 加载教程目录树
   await loadTutorialTree()
+
+  // 加载模型列表
+  await loadModels()
 })
 
 const clearActionQuery = () => {
@@ -623,7 +745,28 @@ const sendMessage = async () => {
   } finally {
     isSending.value = false
     inputMessage.value = ''
+    uploadedFiles.value = []
   }
+}
+
+const handleModelChange = (modelId: string) => {
+  const model = availableModels.find(m => m.id === modelId)
+  if (model) {
+    selectedModel.value = model
+    ElMessage.success(`已切换到 ${model.name}`)
+    // TODO: 这里可以调用后端API更新对话的模型配置
+  }
+}
+
+const handleFileChange = (file: any) => {
+  if (file.raw) {
+    uploadedFiles.value.push(file.raw)
+    ElMessage.success(`已添加文件: ${file.name}`)
+  }
+}
+
+const removeUploadedFile = (index: number) => {
+  uploadedFiles.value.splice(index, 1)
 }
 
 const handleFileSelected = (node: FileNode) => {
@@ -1178,19 +1321,226 @@ onUnmounted(() => {
   padding: 16px 20px;
   border-top: 1px solid #3a3a3a;
   display: flex;
-  gap: 12px;
-  align-items: flex-end;
+  flex-direction: column;
+  background-color: #1f1f1f;
 }
 
-.chat-input :deep(.el-textarea__inner) {
+.input-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   background-color: #2a2a2a;
-  border-color: #3a3a3a;
+  border-radius: 12px;
+  padding: 12px 16px;
+}
+
+.model-selector {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background-color: #ffffff;
+  border-radius: 20px;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+  user-select: none;
+}
+
+.model-selector:hover {
+  background-color: #f0f0f0;
+}
+
+.model-selector-loading {
+  cursor: default;
+}
+
+.model-selector-loading:hover {
+  background-color: #ffffff;
+}
+
+.model-icon {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.model-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.model-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #495057;
+}
+
+.dropdown-icon {
+  font-size: 12px;
+  color: #6c757d;
+  margin-left: 2px;
+}
+
+.model-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.model-option-icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.model-option-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.model-option-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.model-option-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #333;
+}
+
+.model-option-desc {
+  font-size: 11px;
+  color: #999;
+}
+
+.message-input {
+  flex: 1;
+}
+
+.message-input :deep(.el-textarea__inner) {
+  background-color: transparent;
+  border: none;
   color: #e0e0e0;
   font-family: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  resize: none;
+  padding: 0;
+  box-shadow: none;
 }
 
-.chat-input :deep(.el-textarea__inner:focus) {
+.message-input :deep(.el-textarea__inner):focus {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.message-input :deep(.el-textarea__inner)::placeholder {
+  color: #666;
+}
+
+/* 上传文件列表 */
+.uploaded-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.file-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background-color: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  font-size: 12px;
+  color: #e0e0e0;
+}
+
+.file-item .el-icon {
+  font-size: 14px;
+  color: #667eea;
+}
+
+.file-name {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-remove {
+  margin-left: 4px;
+  padding: 2px;
+  color: #888;
+}
+
+.file-remove:hover {
+  color: #f56c6c;
+}
+
+/* 输入框底部 */
+.input-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.input-footer-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.input-footer-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.action-btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #6c757d;
+  background-color: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  transition: all 0.2s;
+}
+
+.action-btn:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+  color: #e0e0e0;
+}
+
+.send-btn {
+  width: 32px;
+  height: 32px;
+  background-color: #667eea;
   border-color: #667eea;
+  color: white;
+}
+
+.send-btn:hover:not(:disabled) {
+  background-color: #5568d3;
+  border-color: #5568d3;
+}
+
+.send-btn:disabled {
+  background-color: rgba(255, 255, 255, 0.05);
+  border-color: transparent;
+  color: #666;
 }
 
 /* 右侧工作区 */
@@ -1620,5 +1970,25 @@ onUnmounted(() => {
 
 .conv-time {
   opacity: 0.7;
+}
+
+/* 下拉菜单深色主题 */
+.chat-input :deep(.el-dropdown-menu) {
+  background-color: #2a2a2a;
+  border-color: #3a3a3a;
+}
+
+.chat-input :deep(.el-dropdown-menu__item) {
+  color: #e0e0e0;
+  padding: 8px 12px;
+}
+
+.chat-input :deep(.el-dropdown-menu__item:hover) {
+  background-color: #3a3a3a;
+}
+
+.chat-input :deep(.el-dropdown-menu__item.is-active) {
+  background-color: rgba(102, 126, 234, 0.2);
+  color: #667eea;
 }
 </style>

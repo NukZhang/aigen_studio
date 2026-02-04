@@ -23,8 +23,29 @@ class PreviewScriptServiceTest {
         assertTrue(Files.exists(scriptPath));
         String content = Files.readString(scriptPath);
         assertTrue(content.contains("PORT=${1:-3002}"));
-        assertTrue(content.contains("npm run dev"));
+        assertTrue(content.contains("exec npm run dev"));
         assertTrue(content.contains("BASE_PATH"));
+    }
+
+    @Test
+    void updatesExistingScriptToUseExec(@TempDir Path tmp) throws Exception {
+        Path frontendDir = Files.createDirectories(tmp.resolve("frontend"));
+        Path scriptPath = frontendDir.resolve("scripts/start-preview.sh");
+        Files.createDirectories(scriptPath.getParent());
+        Files.writeString(scriptPath, String.join("\n",
+                "#!/usr/bin/env sh",
+                "set -e",
+                "PORT=${1:-3002}",
+                "BASE_PATH=${2:-/__preview__/}",
+                "npm run dev -- --port \"$PORT\" --strictPort --base \"$BASE_PATH\"",
+                ""
+        ));
+
+        PreviewScriptService service = new PreviewScriptService();
+        service.ensureFrontendStartScript(frontendDir);
+
+        String updated = Files.readString(scriptPath);
+        assertTrue(updated.contains("exec npm run dev"));
     }
 
     @Test

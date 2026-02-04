@@ -48,8 +48,8 @@ class ConversationReadyStageTest {
     static class Config {
         @Bean
         @Primary
-        IFlowTaskService iFlowTaskService() {
-            return new IFlowTaskService(null) {
+        PromptTaskService promptTaskService() {
+            return new PromptTaskService(null) {
                 @Override
                 public void generateCode(String irContent, Path outputPath, Consumer<String> logConsumer) {
                     logConsumer.accept("generated");

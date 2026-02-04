@@ -174,3 +174,17 @@ export const previewApi = {
     )
   }
 }
+
+export interface Model {
+  id: string
+  name: string
+  description: string
+  isDefault: boolean
+  type: string
+}
+
+export const modelApi = {
+  getAvailableModels: () => {
+    return api.get<Model[]>('/models')
+  }
+}

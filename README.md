@@ -1,6 +1,6 @@
 # AIGen Studio
 
-基于 Me2AI 规范实现的 AI 代码生成平台 PoC，支持需求管理、IR 编辑、代码生成和产出物管理。
+基于 iFlow SDK 实现的 AI 驱动开发平台，通过自然语言对话完成应用开发，支持实时预览和代码编辑。
 
 ## 🚀 快速开始
 
@@ -32,38 +32,54 @@ cd frontend && npm install && npm run dev
 
 - 前端界面: http://localhost:3000
 - 后端 API: http://localhost:8080/api
-- API 文档: http://localhost:8080/api/swagger-ui.html
+- H2 控制台: http://localhost:8080/api/h2-console
 
 ## 📋 核心功能
 
-- ✅ 需求管理：创建、编辑、删除需求
-- ✅ IR 编辑器：在线编辑和验证 IR 文档
-- ✅ 代码生成：基于 iFlow SDK 的代码生成
-- ✅ 作业管理：创建和执行代码生成作业
-- ✅ 产出物管理：查看和下载生成的代码
+- ✅ AI 对话：通过自然语言描述需求，AI 自动理解并生成代码
+- ✅ 实时预览：自动启动前后端服务，实时查看应用运行效果
+- ✅ 代码编辑：在线查看和编辑生成的代码文件
+- ✅ 多模型支持：支持选择不同的 AI 模型进行代码生成
+- ✅ 教程系统：内置开发教程，帮助快速上手
 
 ## 📖 文档
 
 - [项目详细文档](./PROJECT_README.md)
-- [IR 文档模板](./docs/IR_TEMPLATE.md)
+- [实现总结](./IMPLEMENTATION_SUMMARY.md)
+- [快速入门](./docs/QUICKSTART.md)
 - [部署指南](./docs/DEPLOYMENT.md)
-- [需求规范](./spec/Me2AI/需求描述.md)
 
 ## 🏗️ 技术栈
 
 **后端：** Spring Boot 3 + JPA + H2 + iFlow SDK
 
-**前端：** Vue 3 + TypeScript + Element Plus + Vite
+**前端：** Vue 3 + TypeScript + Element Plus + Vite + Monaco Editor
 
 ## 📦 项目结构
 
 ```
 aigen_studio/
-├── backend/          # Spring Boot 后端
-├── frontend/         # Vue 3 前端
-├── scripts/          # 启动脚本
-├── docs/             # 项目文档
-└── spec/             # 需求和规范
+├── backend/                      # Spring Boot 后端
+│   ├── src/main/java/com/aigen/studio/
+│   │   ├── controller/           # REST API 控制器
+│   │   ├── service/              # 业务逻辑层
+│   │   ├── entity/               # 实体类
+│   │   ├── dto/                  # 数据传输对象
+│   │   ├── sdk/                  # SDK 集成层
+│   │   └── config/               # 配置类
+│   └── src/main/resources/
+│       └── application.yml       # 应用配置
+├── frontend/                     # Vue 3 前端
+│   ├── src/
+│   │   ├── views/                # 页面组件
+│   │   ├── api/                  # API 服务
+│   │   ├── components/           # 组件
+│   │   └── router/               # 路由配置
+│   └── package.json
+├── scripts/                      # 启动脚本
+├── docs/                         # 项目文档
+├── spec/                         # 需求和规范
+└── generated-code/               # 代码生成输出目录
 ```
 
 ## 🔧 配置
@@ -75,21 +91,23 @@ iflow:
   sdk:
     endpoint: https://platform.iflow.cn
     api-key: ${IFLOW_API_KEY}
+    output-dir: ${IFLOW_OUTPUT_DIR:../../generated-code}
 
 gitlab:
   url: ${GITLAB_URL}
   token: ${GITLAB_TOKEN}
-  project-id: ${GITLAB_PROJECT_ID}
 ```
 
 ## 📝 使用流程
 
-1. 创建需求
-2. 编辑 IR 文档
-3. 验证 IR 文档
-4. 创建代码生成作业
-5. 执行作业并查看日志
-6. 下载生成的代码
+1. 创建新对话
+2. 输入需求描述（自然语言）
+3. AI 理解需求并生成 IR
+4. 确认理解内容
+5. AI 自动生成代码
+6. 启动预览服务
+7. 查看实时预览效果
+8. 编辑和优化代码
 
 ## 🤝 贡献
 
