@@ -173,7 +173,7 @@
                 <div class="model-selector">
                   <div class="model-icon">
                     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" fill="#FF6B35"/>
+                      <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" fill="#e0e0e0"/>
                     </svg>
                   </div>
                   <span class="model-name">{{ selectedModel.name }}</span>
@@ -190,7 +190,7 @@
                       <div class="model-option">
                         <div class="model-option-icon">
                           <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" fill="#FF6B35"/>
+                            <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" fill="#e0e0e0"/>
                           </svg>
                         </div>
                         <div class="model-option-info">
@@ -1314,16 +1314,18 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background-color: #ffffff;
+  background-color: #2a2a2a;
   border-radius: 20px;
   padding: 6px 10px;
   cursor: pointer;
   transition: all 0.2s;
   user-select: none;
+  border: 1px solid #444;
 }
 
 .model-selector:hover {
-  background-color: #f0f0f0;
+  background-color: #3a3a3a;
+  border-color: #666;
 }
 
 .model-selector-loading {
@@ -1331,7 +1333,7 @@ onUnmounted(() => {
 }
 
 .model-selector-loading:hover {
-  background-color: #ffffff;
+  background-color: #2a2a2a;
 }
 
 .model-icon {
@@ -1350,12 +1352,12 @@ onUnmounted(() => {
 .model-name {
   font-size: 13px;
   font-weight: 500;
-  color: #495057;
+  color: #e0e0e0;
 }
 
 .dropdown-icon {
   font-size: 12px;
-  color: #6c757d;
+  color: #b0b0b0;
   margin-left: 2px;
 }
 
@@ -1386,12 +1388,12 @@ onUnmounted(() => {
 .model-option-name {
   font-size: 14px;
   font-weight: 500;
-  color: #333;
+  color: #e0e0e0;
 }
 
 .model-option-desc {
   font-size: 11px;
-  color: #999;
+  color: #888;
 }
 
 .message-input {
@@ -2045,7 +2047,8 @@ onUnmounted(() => {
 }
 
 .chat-input :deep(.el-dropdown-menu__item.is-active) {
-  background-color: rgba(102, 126, 234, 0.2);
-  color: #667eea;
+  background-color: rgba(255, 255, 255, 0.1);
+  color: #e0e0e0;
+  border-left: 2px solid #667eea;
 }
 </style>
