@@ -5,7 +5,6 @@ import cn.iflow.sdk.types.config.IFlowOptions;
 import cn.iflow.sdk.types.enums.ApprovalMode;
 import cn.iflow.sdk.types.enums.PermissionMode;
 import cn.iflow.sdk.types.messages.*;
-import com.aigen.studio.dto.ModelDTO;
 import com.aigen.studio.sdk.ICodingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -120,92 +119,7 @@ public class IFlowClientHelper implements ICodingService {
 
     // ==================== ICodingService 接口实现 ====================
 
-    /**
-     * 获取可用的模型列表
-     * 通过 iFlow SDK 调用 iFlow 平台获取模型列表
-     */
-    @Override
-    public List<ModelDTO> getAvailableModels() {
-        log.info("Fetching available models using iFlow SDK");
-
-        try {
-            // 创建临时工作目录
-            Path tempDir = java.nio.file.Files.createTempDirectory("iflow-models");
-
-            // 使用默认配置创建客户端（不启动进程）
-            IFlowOptions options = IFlowOptions.builder()
-                    .autoStartProcess(false)
-                    .timeout(Duration.ofMillis(timeoutMillis))
-                    .permissionMode(PermissionMode.AUTO)
-                    .approvalMode(ApprovalMode.YOLO)
-                    .fileAccess(false)
-                    .build();
-
-            IFlowClient client = createClient(options);
-
-            // 使用 CountDownLatch 等待响应
-            CountDownLatch latch = new CountDownLatch(1);
-            AtomicReference<List<ModelDTO>> modelsRef = new AtomicReference<>(new ArrayList<>());
-
-            // 创建消息处理器
-            MessageHandler handler = new MessageHandler() {
-                @Override
-                public void onAssistantMessage(String text) {
-                    log.info("Assistant message: {}", text);
-                    List<ModelDTO> models = parseModelsFromText(text);
-                    if (!models.isEmpty()) {
-                        modelsRef.set(models);
-                        latch.countDown();
-                    }
-                }
-
-                @Override
-                public void onToolCall(String toolName, String status) {
-                    log.info("Tool call: {}", toolName);
-                }
-
-                @Override
-                public void onToolResult(String content) {
-                    log.info("Tool result: {}", content);
-                }
-
-                @Override
-                public void onTaskFinish(String stopReason) {
-                    log.info("Task finished: {}", stopReason);
-                    latch.countDown();
-                }
-
-                @Override
-                public void onError(Throwable error) {
-                    log.error("Error fetching models", error);
-                    latch.countDown();
-                }
-
-                @Override
-                public void onComplete() {
-                    latch.countDown();
-                }
-            };
-
-            // 连接并发送请求
-            client.connect().block();
-            client.sendMessage("请列出所有可用的 AI 模型").block();
-
-            // 等待响应
-            latch.await();
-
-            // 关闭客户端
-            client.close();
-
-            List<ModelDTO> models = modelsRef.get();
-            log.info("Successfully fetched {} models from iFlow platform", models.size());
-            return models;
-
-        } catch (Exception e) {
-            log.error("Error fetching models from iFlow platform: {}", e.getMessage(), e);
-            return new ArrayList<>();
-        }
-    }
+    
 
     /**
      * 执行任务（通过对话方式）
@@ -259,49 +173,7 @@ public class IFlowClientHelper implements ICodingService {
         return message.getContent().toString();
     }
 
-    /**
-     * 从文本中解析模型列表
-     */
-    private List<ModelDTO> parseModelsFromText(String text) {
-        List<ModelDTO> models = new ArrayList<>();
-
-        try {
-            String[] lines = text.split("\n");
-            for (String line : lines) {
-                line = line.trim();
-                if (line.isEmpty()) continue;
-
-                // 假设每行是一个模型，格式如：- 模型名称：描述
-                if (line.startsWith("-") || line.startsWith("•")) {
-                    String modelText = line.substring(1).trim();
-                    String[] parts = modelText.split("[:：]", 2);
-
-                    if (parts.length >= 1) {
-                        String modelName = parts[0].trim();
-                        String description = parts.length > 1 ? parts[1].trim() : "";
-
-                        models.add(ModelDTO.builder()
-                                .id(modelName.toLowerCase().replace(" ", "-"))
-                                .name(modelName)
-                                .description(description)
-                                .type("general")
-                                .isDefault(false)
-                                .build());
-                    }
-                }
-            }
-
-            // 标记第一个模型为默认模型
-            if (!models.isEmpty()) {
-                models.get(0).setIsDefault(true);
-            }
-
-        } catch (Exception e) {
-            log.error("Error parsing models from text: {}", e.getMessage(), e);
-        }
-
-        return models;
-    }
+    
 
     // ==================== ICodingService 接口实现结束 ====================
 

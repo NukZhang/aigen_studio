@@ -7,7 +7,6 @@
 ```
 com.aigen.studio.sdk/
 ├── ICodingService.java          # AI 编码服务接口（核心抽象）
-├── ModelService.java            # 模型服务（通过 ICodingService 获取模型列表）
 └── iflow/                       # iFlow SDK 实现包
     └── IFlowClientHelper.java   # iFlow SDK 适配器实现
 ```
@@ -30,7 +29,6 @@ com.aigen.studio.sdk/
 
 - `ICodingService`：定义 SDK 接口规范
 - `IFlowClientHelper`：iFlow SDK 的具体实现和适配
-- `ModelService`：模型列表管理（业务服务）
 - `PromptTaskService`：提示词任务处理（业务服务）
 
 ## 核心接口
@@ -39,9 +37,6 @@ com.aigen.studio.sdk/
 
 ```java
 public interface ICodingService {
-    // 获取可用的模型列表
-    List<ModelDTO> getAvailableModels();
-    
     // 执行 AI 任务（带消息处理器）
     void executeTask(Path workDir, String prompt, MessageHandler handler);
     
@@ -58,19 +53,7 @@ public interface ICodingService {
 
 ## 使用示例
 
-### 获取模型列表
 
-```java
-@Service
-@RequiredArgsConstructor
-public class ModelService {
-    private final ICodingService codingService;
-    
-    public List<ModelDTO> getAvailableModels() {
-        return codingService.getAvailableModels();
-    }
-}
-```
 
 ### 执行 AI 任务
 
@@ -103,7 +86,7 @@ public class PromptTaskService {
 
 1. 创建新的包：`sdk/openai/`
 2. 创建实现类：`OpenAIClientHelper implements ICodingService`
-3. 实现 `getAvailableModels()` 和 `executeTask()` 方法
+3. 实现 `executeTask()` 方法
 4. 在 Spring 配置中指定使用哪个实现
 
 无需修改任何业务代码！

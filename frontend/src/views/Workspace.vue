@@ -202,10 +202,6 @@
                   </el-dropdown-menu>
                 </template>
               </el-dropdown>
-              <div v-else-if="isLoadingModels" class="model-selector model-selector-loading">
-                <el-icon class="is-loading"><Loading /></el-icon>
-                <span class="model-name">加载中...</span>
-              </div>
             </div>
             <div class="input-footer-right">
               <el-upload
@@ -360,7 +356,7 @@ import {
   Loading
 } from '@element-plus/icons-vue'
 import { marked } from 'marked'
-import { conversationApi, previewApi, modelApi, type FileNode, type Model } from '../api/job'
+import { conversationApi, previewApi, type FileNode, type Model } from '../api/job'
 import { getTutorialTree, getTutorialContent, type TutorialNode } from '../api/tutorial'
 import FileBrowser from './FileBrowser.vue'
 import CodeEditor from './CodeEditor.vue'
@@ -419,34 +415,17 @@ const headingTreeProps = {
 }
 const autoRefreshTimer = ref<number | null>(null)
 
-// 模型选择相关
-const availableModels = ref<Model[]>([])
-const selectedModel = ref<Model | null>(null)
-
-// 加载模型列表
-const isLoadingModels = ref(true)
-const loadModels = async () => {
-  isLoadingModels.value = true
-  try {
-    const response = await modelApi.getAvailableModels()
-    availableModels.value = response.data
-    // 如果有模型列表，选择默认模型
-    if (response.data && response.data.length > 0) {
-      const defaultModel = response.data.find(m => m.isDefault)
-      selectedModel.value = defaultModel || response.data[0]
-    } else {
-      // 没有模型列表时，selectedModel 为 null
-      selectedModel.value = null
-    }
-  } catch (error) {
-    console.error('Failed to load models:', error)
-    // 加载失败时，不显示任何模型
-    availableModels.value = []
-    selectedModel.value = null
-  } finally {
-    isLoadingModels.value = false
-  }
-}
+// 模型选择相关 - 前端固定模型列表
+const availableModels = ref<Model[]>([
+  { id: 'glm-4.7', name: 'GLM-4.7', description: '推荐' },
+  { id: 'iflow-rome-30ba3b', name: 'iFlow-ROME-30BA3B', description: '预览版' },
+  { id: 'deepseek-v3.2', name: 'DeepSeek-V3.2', description: '' },
+  { id: 'qwen3-coder-plus', name: 'Qwen3-Coder-Plus', description: '' },
+  { id: 'kimi-k2-thinking', name: 'Kimi-K2-Thinking', description: '' },
+  { id: 'minimax-m2.1', name: 'MiniMax-M2.1', description: '' },
+  { id: 'kimi-k2-0905', name: 'Kimi-K2-0905', description: '' }
+])
+const selectedModel = ref<Model | null>(availableModels.value[0])
 const uploadRef = ref()
 const uploadedFiles = ref<File[]>([])
 const isLoadingConversation = ref(false)
@@ -556,9 +535,6 @@ onMounted(async () => {
 
   // 加载教程目录树
   await loadTutorialTree()
-
-  // 加载模型列表
-  await loadModels()
 })
 
 const clearActionQuery = () => {

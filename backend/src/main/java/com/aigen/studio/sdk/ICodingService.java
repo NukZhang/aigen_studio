@@ -1,7 +1,5 @@
 package com.aigen.studio.sdk;
 
-import com.aigen.studio.dto.ModelDTO;
-
 import java.nio.file.Path;
 import java.util.List;
 
@@ -10,13 +8,6 @@ import java.util.List;
  * 定义与 AI SDK 交互的标准接口，支持多种 SDK 实现
  */
 public interface ICodingService {
-
-    /**
-     * 获取可用的模型列表
-     *
-     * @return 模型列表
-     */
-    List<ModelDTO> getAvailableModels();
 
     /**
      * 执行任务（通过对话方式）
