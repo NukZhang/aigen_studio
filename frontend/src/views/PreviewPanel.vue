@@ -85,13 +85,17 @@
         </div>
       </div>
 
-      <iframe
-        v-else-if="previewUrl"
-        :src="previewUrl"
-        class="preview-frame"
-        frameborder="0"
-        sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-      ></iframe>
+      <div v-else-if="previewUrl" class="iphone-frame">
+        <div class="iphone-border">
+          <div class="dynamic-island"></div>
+          <iframe
+            :src="previewUrl"
+            class="preview-frame"
+            frameborder="0"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+          ></iframe>
+        </div>
+      </div>
 
       <div v-else class="placeholder">
         <el-icon size="64"><Monitor /></el-icon>
@@ -527,6 +531,60 @@ onUnmounted(() => {
   height: 100%;
   border: none;
   background-color: #ffffff;
+}
+
+/* iPhone 15 Pro 手机框样式 */
+.iphone-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 20px;
+  background-color: #1f1f1f;
+}
+
+.iphone-border {
+  position: relative;
+  width: 100%;
+  max-width: 390px;
+  height: 100%;
+  max-height: 844px;
+  background: linear-gradient(145deg, #C0C4C8 0%, #D0D4D8 100%);
+  border-radius: 32px;
+  padding: 12px 10px 10px 10px;
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(0, 0, 0, 0.05),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+  /* 哑光质感 */
+  background-image:
+    radial-gradient(circle at 20% 30%, rgba(255, 255, 255, 0.05) 0%, transparent 20%),
+    radial-gradient(circle at 80% 70%, rgba(0, 0, 0, 0.03) 0%, transparent 20%),
+    repeating-linear-gradient(45deg, transparent, transparent 3px, rgba(0, 0, 0, 0.01) 3px, rgba(0, 0, 0, 0.01) 6px);
+}
+
+/* Dynamic Island */
+.dynamic-island {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 52px;
+  height: 24px;
+  border-radius: 12px;
+  background: #000;
+  box-shadow: inset 0 0 2px rgba(0, 0, 0, 0.3);
+  z-index: 10;
+}
+
+/* 屏幕区域容器 */
+.iphone-border .preview-frame {
+  width: 100%;
+  height: 100%;
+  border-radius: 28px;
+  overflow: hidden;
+  background-color: #000;
 }
 
 /* 启动日志样式 */
