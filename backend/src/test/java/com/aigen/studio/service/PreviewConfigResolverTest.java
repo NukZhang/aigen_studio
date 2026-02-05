@@ -23,12 +23,12 @@ class PreviewConfigResolverTest {
 
     @Test
     void readsPortsFromApplicationYaml(@TempDir Path tmp) throws Exception {
-        Files.writeString(tmp.resolve("application.yml"), "preview:\n  frontendPort: 3002\n  backendPort: 8081\n");
+        Files.writeString(tmp.resolve("application.yml"), "preview:\n  frontendPort: 4010\n  backendPort: 9090\n");
 
         Object config = resolveConfig(tmp);
 
-        assertEquals(3002, readPort(config, "frontendPort"));
-        assertEquals(8081, readPort(config, "backendPort"));
+        assertEquals(4010, readPort(config, "frontendPort"));
+        assertEquals(9090, readPort(config, "backendPort"));
     }
 
     @Test
@@ -37,7 +37,7 @@ class PreviewConfigResolverTest {
 
         Object config = resolveConfig(tmp);
 
-        assertNotEquals(3000, readPort(config, "frontendPort"));
+        assertEquals(3000, readPort(config, "frontendPort"));
         assertNotEquals(8080, readPort(config, "backendPort"));
     }
 

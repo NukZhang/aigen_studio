@@ -356,6 +356,7 @@ import {
   Loading
 } from '@element-plus/icons-vue'
 import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import { conversationApi, previewApi, type FileNode, type Model } from '../api/job'
 import { getTutorialTree, getTutorialContent, type TutorialNode } from '../api/tutorial'
 import FileBrowser from './FileBrowser.vue'
@@ -754,9 +755,13 @@ const handleFileSelected = (node: FileNode) => {
 
 const renderMarkdown = (content: string) => {
   try {
-    return marked(content)
+    const html = marked.parse(content ?? '')
+    return DOMPurify.sanitize(html, {
+      FORBID_TAGS: ['style', 'script', 'iframe'],
+      FORBID_ATTR: ['style', 'on*']
+    })
   } catch (error) {
-    return content
+    return DOMPurify.sanitize(content ?? '')
   }
 }
 
@@ -933,6 +938,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   border-right: 1px solid #3a3a3a;
+  overflow: hidden;
 }
 
 .chat-header {
@@ -953,6 +959,7 @@ onUnmounted(() => {
 .chat-history {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 20px;
 }
 
@@ -979,10 +986,12 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  min-width: 0;
 }
 
 .message {
   max-width: 85%;
+  min-width: 0;
 }
 
 .message.user {
@@ -1014,6 +1023,9 @@ onUnmounted(() => {
   border-radius: 12px;
   padding: 12px 16px;
   border: 1px solid #3a3a3a;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .message.user .message-content {
@@ -1026,6 +1038,7 @@ onUnmounted(() => {
   max-width: 100%;
   overflow-wrap: break-word;
   word-wrap: break-word;
+  min-width: 0;
 }
 
 .content-text :deep(p) {
@@ -1070,6 +1083,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
 }
 
 .tool-call {
@@ -1077,6 +1091,7 @@ onUnmounted(() => {
   border-radius: 8px;
   padding: 12px;
   border-left: 3px solid #667eea;
+  min-width: 0;
 }
 
 .tool-call-header {
@@ -1118,6 +1133,7 @@ onUnmounted(() => {
 .tool-arguments,
 .tool-result {
   margin-top: 8px;
+  min-width: 0;
 }
 
 .result-header {
@@ -1134,6 +1150,9 @@ onUnmounted(() => {
   font-size: 12px;
   overflow-x: auto;
   margin: 0;
+  max-width: 100%;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* 待办事项 */

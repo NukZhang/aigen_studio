@@ -65,7 +65,7 @@
         <el-icon size="64"><Monitor /></el-icon>
         <p>预览功能尚未启动</p>
         <p class="hint">点击上方"启动预览"按钮，预览生成的应用</p>
-        <p class="note">注意：预览功能会在后台启动前后端服务，前端端口固定为3002</p>
+        <p class="note">注意：预览功能会在后台启动前后端服务，端口以配置文件为准</p>
         <p v-if="status?.message" class="status-message">{{ status.message }}</p>
       </div>
 

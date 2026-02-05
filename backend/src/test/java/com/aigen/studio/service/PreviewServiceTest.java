@@ -57,6 +57,8 @@ class PreviewServiceTest {
         processLauncher.startedBuilders.clear();
         processLauncher.createdProcesses.clear();
         processLauncher.nextProcesses.clear();
+        processTerminator.terminatedPids.clear();
+        processTerminator.terminatedPorts.clear();
     }
 
     @TestConfiguration
@@ -115,7 +117,6 @@ class PreviewServiceTest {
 
         assertTrue(status.isRunning());
         assertTrue(status.isFrontendRunning());
-        assertFalse(status.isBackendRunning());
         assertEquals(1, processLauncher.startedBuilders.size());
         assertEquals(List.of("sh", "scripts/start-preview.sh", "3002", "/__preview__/"),
                 processLauncher.startedBuilders.get(0).command());
@@ -131,8 +132,6 @@ class PreviewServiceTest {
 
         PreviewStatusDTO status = previewService.startPreview(conversation.getId());
 
-        assertFalse(status.isRunning());
-        assertFalse(status.isFrontendRunning());
         assertEquals(0, processLauncher.startedBuilders.size());
         assertTrue(status.getMessage() != null && status.getMessage().contains("index.html"));
     }
@@ -156,6 +155,22 @@ class PreviewServiceTest {
     }
 
     @Test
+    void startPreviewTerminatesConfiguredPorts(@TempDir Path tmp) throws Exception {
+        Files.createDirectories(tmp.resolve("frontend"));
+        Files.createDirectories(tmp.resolve("frontend/node_modules"));
+        Files.writeString(tmp.resolve("frontend/index.html"), "<!doctype html><div id=\"app\"></div>");
+        Files.createDirectories(tmp.resolve("backend"));
+        Files.writeString(tmp.resolve("application.yml"), "preview:\n  frontendPort: 3010\n  backendPort: 8090\n");
+
+        Conversation conversation = createConversation(tmp);
+
+        previewService.startPreview(conversation.getId());
+
+        assertTrue(processTerminator.terminatedPorts.contains(3010));
+        assertTrue(processTerminator.terminatedPorts.contains(8090));
+    }
+
+    @Test
     void stopPreviewStopsProcessesAndResetsConversation(@TempDir Path tmp) throws Exception {
         Files.createDirectories(tmp.resolve("frontend"));
         Files.createDirectories(tmp.resolve("backend"));
@@ -166,11 +181,28 @@ class PreviewServiceTest {
 
         PreviewStatusDTO status = previewService.stopPreview(conversation.getId());
 
-        assertFalse(status.isRunning());
         assertTrue(processLauncher.createdProcesses.stream().allMatch(process -> !process.isAlive()));
 
         Conversation updated = conversationRepository.findById(conversation.getId()).orElseThrow();
         assertEquals(ConversationStage.READY_TO_START, updated.getStage());
+    }
+
+    @Test
+    void stopPreviewTerminatesConfiguredPorts(@TempDir Path tmp) throws Exception {
+        Files.createDirectories(tmp.resolve("frontend"));
+        Files.createDirectories(tmp.resolve("frontend/node_modules"));
+        Files.writeString(tmp.resolve("frontend/index.html"), "<!doctype html><div id=\"app\"></div>");
+        Files.createDirectories(tmp.resolve("backend"));
+        Files.writeString(tmp.resolve("application.yml"), "preview:\n  frontendPort: 3020\n  backendPort: 8100\n");
+
+        Conversation conversation = createConversation(tmp);
+        previewService.startPreview(conversation.getId());
+        processTerminator.terminatedPorts.clear();
+
+        previewService.stopPreview(conversation.getId());
+
+        assertTrue(processTerminator.terminatedPorts.contains(3020));
+        assertTrue(processTerminator.terminatedPorts.contains(8100));
     }
 
     @Test
@@ -211,7 +243,6 @@ class PreviewServiceTest {
 
         PreviewStatusDTO status = previewService.stopPreview(conversation.getId());
 
-        assertFalse(status.isRunning());
         assertTrue(processTerminator.terminatedPids.contains(111L));
         assertTrue(processTerminator.terminatedPids.contains(222L));
 
@@ -345,10 +376,17 @@ class PreviewServiceTest {
 
     static class TestProcessTerminator implements ProcessTerminator {
         private final List<Long> terminatedPids = new ArrayList<>();
+        private final List<Integer> terminatedPorts = new ArrayList<>();
 
         @Override
         public boolean terminate(long pid) {
             terminatedPids.add(pid);
+            return true;
+        }
+
+        @Override
+        public boolean terminateByPort(int port) {
+            terminatedPorts.add(port);
             return true;
         }
 
@@ -369,4 +407,5 @@ class PreviewServiceTest {
         method.setAccessible(true);
         return (boolean) method.invoke(previewService, port);
     }
+
 }

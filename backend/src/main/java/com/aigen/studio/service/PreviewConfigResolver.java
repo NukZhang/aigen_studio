@@ -11,19 +11,19 @@ import java.util.Properties;
 @Service
 public class PreviewConfigResolver {
 
-    private static final int FIXED_FRONTEND_PORT = 3002;
+    private static final int DEFAULT_FRONTEND_PORT = 3002;
     private static final int DEFAULT_BACKEND_PORT = 8081;
     private static final int RESERVED_BACKEND_PORT = 8080;
 
     public PreviewConfig resolve(Path root) {
-        // 前端端口强制固定为3002，不受配置文件影响
-        int frontendPort = FIXED_FRONTEND_PORT;
+        int frontendPort = DEFAULT_FRONTEND_PORT;
 
         int backendPort = DEFAULT_BACKEND_PORT;
 
         Path configPath = root.resolve("application.yml");
         if (Files.exists(configPath)) {
             Properties properties = loadYaml(configPath);
+            frontendPort = parsePort(properties.getProperty("preview.frontendPort"), DEFAULT_FRONTEND_PORT);
             backendPort = parsePort(properties.getProperty("preview.backendPort"), DEFAULT_BACKEND_PORT);
         }
 

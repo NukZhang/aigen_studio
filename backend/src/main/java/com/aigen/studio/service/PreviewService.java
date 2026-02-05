@@ -49,6 +49,7 @@ public class PreviewService {
                 return buildStatus(conversationId, config, activeSession.frontendProcess, activeSession.backendProcess, null);
             }
 
+            stopProcessesByPort(config);
             stopOrphanedProcesses(conversationId);
 
             Process frontendProcess = null;
@@ -89,17 +90,18 @@ public class PreviewService {
                 activeSession = null;
             }
 
-            stopOrphanedProcesses(conversationId);
-
             Conversation conversation = loadConversation(conversationId);
+            if (config == null) {
+                config = previewConfigResolver.resolve(resolveRoot(conversation));
+            }
+
+            stopOrphanedProcesses(conversationId);
+            stopProcessesByPort(config);
+
             conversation.setStage(ConversationStage.READY_TO_START);
             conversation.setServiceStatus("STOPPED");
             conversation.setPreviewUrl(null);
             conversationRepository.save(conversation);
-
-            if (config == null) {
-                config = previewConfigResolver.resolve(resolveRoot(conversation));
-            }
 
             return buildStatus(conversationId, config, frontend, backend, "stopped");
         }
@@ -452,6 +454,14 @@ public class PreviewService {
     private void stopOrphanedProcesses(Long conversationId) {
         stopProcessByPid(conversationId, "frontend");
         stopProcessByPid(conversationId, "backend");
+    }
+
+    private void stopProcessesByPort(PreviewConfig config) {
+        if (config == null) {
+            return;
+        }
+        processTerminator.terminateByPort(config.frontendPort());
+        processTerminator.terminateByPort(config.backendPort());
     }
 
     private void stopProcessByPid(Long conversationId, String service) {
