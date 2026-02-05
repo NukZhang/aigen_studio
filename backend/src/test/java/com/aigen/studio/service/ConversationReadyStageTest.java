@@ -7,6 +7,7 @@ import com.aigen.studio.entity.ConversationStage;
 import com.aigen.studio.entity.Message;
 import com.aigen.studio.repository.ConversationRepository;
 import com.aigen.studio.repository.MessageRepository;
+import com.aigen.studio.sdk.ICodingService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.io.TempDir;
@@ -43,8 +44,10 @@ class ConversationReadyStageTest {
     @TempDir
     static Path outputDir;
 
-    private static CountDownLatch generationStarted;
-    private static CountDownLatch allowComplete;
+    private static CountDownLatch uiGenerationStarted;
+    private static CountDownLatch allowUiComplete;
+    private static CountDownLatch codeGenerationStarted;
+    private static CountDownLatch allowCodeComplete;
 
     @Autowired
     private ConversationService conversationService;
@@ -57,21 +60,41 @@ class ConversationReadyStageTest {
 
     @BeforeEach
     void resetLatches() {
-        generationStarted = new CountDownLatch(1);
-        allowComplete = new CountDownLatch(1);
+        uiGenerationStarted = new CountDownLatch(1);
+        allowUiComplete = new CountDownLatch(1);
+        codeGenerationStarted = new CountDownLatch(1);
+        allowCodeComplete = new CountDownLatch(1);
     }
 
     @TestConfiguration
     static class Config {
         @Bean
         @Primary
+        ICodingService codingService() {
+            return new ICodingService() {
+                @Override
+                public void executeTask(String prompt, Path workDir, MessageHandler handler) {
+                    uiGenerationStarted.countDown();
+                    try {
+                        allowUiComplete.await(5, TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                    handler.onAssistantMessage("<html></html>");
+                    handler.onComplete();
+                }
+            };
+        }
+
+        @Bean
+        @Primary
         PromptTaskService promptTaskService() {
             return new PromptTaskService(null) {
                 @Override
                 public void generateCode(String irContent, Path outputPath, Consumer<String> logConsumer) {
-                    generationStarted.countDown();
+                    codeGenerationStarted.countDown();
                     try {
-                        allowComplete.await(5, TimeUnit.SECONDS);
+                        allowCodeComplete.await(5, TimeUnit.SECONDS);
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                     }
@@ -92,7 +115,7 @@ class ConversationReadyStageTest {
     }
 
     @Test
-    void confirmUnderstandingReturnsBeforeGenerationCompletes() throws Exception {
+    void confirmUnderstandingReturnsBeforeUiGenerationCompletes() throws Exception {
         Conversation conversation = new Conversation();
         conversation.setProjectName("Test");
         conversation.setUserRequirement("Generate a demo app");
@@ -111,40 +134,43 @@ class ConversationReadyStageTest {
         try {
             ConversationDTO response = future.get(500, TimeUnit.MILLISECONDS);
             assertNotNull(response);
+            assertTrue(uiGenerationStarted.await(2, TimeUnit.SECONDS));
         } finally {
-            allowComplete.countDown();
+            allowUiComplete.countDown();
             executor.shutdownNow();
         }
 
         Conversation updated = conversationRepository.findById(conversationId).orElseThrow();
-        assertEquals(ConversationStage.CODE_GENERATING, updated.getStage());
+        assertEquals(ConversationStage.UI_GENERATING, updated.getStage());
 
         List<Message> messages = messageRepository.findByConversationIdOrderByCreatedAtAsc(conversationId);
-        assertTrue(messages.stream().anyMatch(msg -> msg.getContent().contains("开始生成代码")));
+        assertTrue(messages.stream().anyMatch(msg -> msg.getContent().contains("正在生成 UI 原型")));
     }
 
     @Test
-    void confirmUnderstandingEventuallyMarksReadyToStart() throws Exception {
+    void confirmUiPrototypeEventuallyMarksReadyToStart() throws Exception {
         Conversation conversation = new Conversation();
         conversation.setProjectName("Test");
         conversation.setUserRequirement("Generate a demo app");
         conversation.setAiUnderstanding("Understood requirements");
         conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
-        conversation.setStage(ConversationStage.UNDERSTANDING_CONFIRMED);
+        conversation.setStage(ConversationStage.UI_GENERATING);
         conversation.setUnderstandingConfirmed(false);
+        conversation.setUiPrototypeContent("<html></html>");
+        conversation.setUiConfirmed(false);
         conversation = conversationRepository.save(conversation);
         final Long conversationId = conversation.getId();
 
         ExecutorService executor = Executors.newSingleThreadExecutor();
         Future<ConversationDTO> future = executor.submit(() ->
-                conversationService.confirmUnderstanding(conversationId, new ConfirmUnderstandingRequest(true, null))
+                conversationService.confirmUIPrototype(conversationId)
         );
 
         try {
             future.get(500, TimeUnit.MILLISECONDS);
-            assertTrue(generationStarted.await(2, TimeUnit.SECONDS));
+            assertTrue(codeGenerationStarted.await(2, TimeUnit.SECONDS));
         } finally {
-            allowComplete.countDown();
+            allowCodeComplete.countDown();
             executor.shutdownNow();
         }
 

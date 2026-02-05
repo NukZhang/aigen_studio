@@ -25,6 +25,7 @@ public class ConversationService {
     private final MessageRepository messageRepository;
     private final PromptTaskService promptTaskService;
     private final CodeGenerationService codeGenerationService;
+    private final UIPrototypeService uiPrototypeService;
 
     // ==================== 独立对话流程方法 ====================
 
@@ -78,17 +79,17 @@ public class ConversationService {
                 .orElseThrow(() -> new RuntimeException("Conversation not found: " + conversationId));
 
         if (request.getConfirmed()) {
-            // 用户确认理解，进入代码生成阶段
+            // 用户确认理解，进入 UI 生成阶段（第3步）
             conversation.setUnderstandingConfirmed(true);
-            conversation.setStage(ConversationStage.CODE_GENERATING);
+            conversation.setStage(ConversationStage.UI_GENERATING);
             conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
             conversation = conversationRepository.save(conversation);
 
-            log.info("User confirmed understanding for conversation: {}, moving to CODE_GENERATING", conversationId);
+            log.info("User confirmed understanding for conversation: {}, moving to UI_GENERATING", conversationId);
 
-            codeGenerationService.sendProgressMessage(conversationId, "开始生成代码...", "system");
-            // 异步调用 iFlow SDK 生成代码
-            codeGenerationService.generateCodeForConversationAsync(conversationId);
+            codeGenerationService.sendProgressMessage(conversationId, "正在生成 UI 原型...", "system");
+            // 异步调用 iFlow SDK 生成 UI 原型
+            uiPrototypeService.generateUIPrototype(conversationId);
 
         } else {
             // 用户不确认，返回到理解阶段
@@ -305,6 +306,32 @@ public class ConversationService {
     private void handlePreviewing(Conversation conversation, MessageDTO message, MessageDTO response) {
         response.setContent("您可以在\"预览\"标签页查看应用效果。\n\n" +
                 "如果需要修改，请告诉我。");
+    }
+
+    /**
+     * 确认 UI 设计
+     */
+    public ConversationDTO confirmUIPrototype(Long conversationId) {
+        log.info("Confirming UI prototype for conversation: {}", conversationId);
+
+        Conversation conversation = conversationRepository.findById(conversationId)
+                .orElseThrow(() -> new RuntimeException("Conversation not found: " + conversationId));
+
+        // 确认 UI 设计
+        uiPrototypeService.confirmUIPrototype(conversationId);
+
+        // 进入代码生成阶段（第4步）
+        conversation.setStage(ConversationStage.CODE_GENERATING);
+        conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+        conversation = conversationRepository.save(conversation);
+
+        log.info("UI confirmed for conversation: {}, moving to CODE_GENERATING", conversationId);
+
+        codeGenerationService.sendProgressMessage(conversationId, "开始生成代码...", "system");
+        // 异步调用 iFlow SDK 生成代码
+        codeGenerationService.generateCodeForConversationAsync(conversationId);
+
+        return convertToDTO(conversation);
     }
 
     /**

@@ -34,6 +34,10 @@ dist-ssr/
 logs/
 *.log
 
+# Local databases
+data/*.mv.db
+data/*.trace.db
+
 # Environment
 .env
 .env.local

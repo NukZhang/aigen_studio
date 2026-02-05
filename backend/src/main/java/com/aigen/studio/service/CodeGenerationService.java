@@ -24,6 +24,7 @@ public class CodeGenerationService {
     private final MessageRepository messageRepository;
     private final PromptTaskService promptTaskService;
     private final PreviewScriptService previewScriptService;
+    private final UIPrototypeService uiPrototypeService;
 
     @Value("${iflow.sdk.output-dir:./output}")
     private String outputDir;
@@ -44,7 +45,8 @@ public class CodeGenerationService {
 
             sendProgressMessage(conversationId, "正在调用 iFlow SDK 生成代码，请稍候...", "system");
 
-            String irContent = generateIRContent(conversation);
+            String uiPrototypeHtml = uiPrototypeService.getUIPrototype(conversationId);
+            String irContent = generateIRContent(conversation, uiPrototypeHtml);
 
             promptTaskService.generateCode(irContent, outputPath, message -> {
                 log.info("Code generation log: {}", message);
@@ -103,29 +105,42 @@ public class CodeGenerationService {
         previewScriptService.ensureFrontendRouterBase(frontendDir);
     }
 
-    private String generateIRContent(Conversation conversation) {
-        return String.format("""
-            {
-              "projectName": "%s",
-              "userRequirement": "%s",
-              "aiUnderstanding": "%s",
-              "modules": [
-                {
-                  "name": "frontend",
-                  "type": "vue3",
-                  "features": []
-                },
-                {
-                  "name": "backend",
-                  "type": "springboot",
-                  "features": []
-                }
-              ]
-            }
-            """,
-            conversation.getProjectName(),
-            conversation.getUserRequirement().replace("\n", " "),
-            conversation.getAiUnderstanding().replace("\n", " ")
-        );
+    private String generateIRContent(Conversation conversation, String uiPrototypeHtml) {
+        StringBuilder ir = new StringBuilder();
+        ir.append("{\n");
+        ir.append("  \"projectName\": \"").append(escapeJson(conversation.getProjectName())).append("\",\n");
+        ir.append("  \"userRequirement\": \"").append(escapeJson(conversation.getUserRequirement().replace("\n", " "))).append("\",\n");
+        ir.append("  \"aiUnderstanding\": \"").append(escapeJson(conversation.getAiUnderstanding().replace("\n", " "))).append("\",\n");
+        
+        if (uiPrototypeHtml != null && !uiPrototypeHtml.trim().isEmpty()) {
+            ir.append("  \"uiPrototypeHtml\": \"").append(escapeJson(uiPrototypeHtml.replace("\n", " ").replace("\"", "\\\""))).append("\",\n");
+        }
+        
+        ir.append("  \"modules\": [\n");
+        ir.append("    {\n");
+        ir.append("      \"name\": \"frontend\",\n");
+        ir.append("      \"type\": \"vue3\",\n");
+        ir.append("      \"features\": []\n");
+        ir.append("    },\n");
+        ir.append("    {\n");
+        ir.append("      \"name\": \"backend\",\n");
+        ir.append("      \"type\": \"springboot\",\n");
+        ir.append("      \"features\": []\n");
+        ir.append("    }\n");
+        ir.append("  ]\n");
+        ir.append("}");
+        
+        return ir.toString();
+    }
+
+    private String escapeJson(String str) {
+        if (str == null) return "";
+        return str.replace("\\", "\\\\")
+                 .replace("\"", "\\\"")
+                 .replace("\b", "\\b")
+                 .replace("\f", "\\f")
+                 .replace("\n", "\\n")
+                 .replace("\r", "\\r")
+                 .replace("\t", "\\t");
     }
 }

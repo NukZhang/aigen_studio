@@ -112,13 +112,34 @@
           <div class="understanding-text" v-html="renderMarkdown(conversation.aiUnderstanding)"></div>
         </div>
         <div class="confirm-actions">
-          <el-button type="success" @click="confirmUnderstanding(true)" :loading="isConfirming">
+          <el-button type="primary" size="small" @click="confirmUnderstanding(true)" :loading="isConfirming">
             <el-icon><CircleCheck /></el-icon>
-            确认，开始生成代码
+            确认，生成UI
           </el-button>
-          <el-button type="danger" @click="confirmUnderstanding(false)" :loading="isConfirming">
+          <el-button size="small" @click="confirmUnderstanding(false)" :loading="isConfirming">
             <el-icon><CircleClose /></el-icon>
-            不正确，需要修改
+            需要修改
+          </el-button>
+        </div>
+      </div>
+
+      <!-- UI 原型确认面板 -->
+      <div class="ui-confirm-panel" v-if="conversation?.stage === 'UI_GENERATING' && conversation.uiPrototypeContent && !conversation.uiConfirmed">
+        <div class="confirm-header">
+          <el-icon><Monitor /></el-icon>
+          <span>UI 原型已生成</span>
+        </div>
+        <div class="confirm-content">
+          <p>请在"UI原型"Tab 中预览设计，确认后点击下方按钮开始生成代码。</p>
+        </div>
+        <div class="confirm-actions">
+          <el-button type="primary" size="small" @click="confirmUIPrototype" :loading="isConfirmingUI">
+            <el-icon><CircleCheck /></el-icon>
+            确认 UI 设计，生成代码
+          </el-button>
+          <el-button size="small" @click="regenerateUIPrototype" :loading="isRegeneratingUI">
+            <el-icon><Refresh /></el-icon>
+            重新生成 UI
           </el-button>
         </div>
       </div>
@@ -239,6 +260,11 @@
     <div class="developer-panel">
       <div class="panel-header">
         <el-tabs v-model="activeTab" type="border-card">
+          <el-tab-pane label="UI原型" name="ui-prototype">
+            <div class="tab-content ui-prototype-content">
+              <UIPrototypePanel :conversation-id="conversationId || undefined" />
+            </div>
+          </el-tab-pane>
           <el-tab-pane label="预览" name="preview">
             <div class="tab-content preview-content">
               <PreviewPanel :conversation-id="conversationId || undefined" />
@@ -359,9 +385,11 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { conversationApi, previewApi, type FileNode, type Model } from '../api/job'
 import { getTutorialTree, getTutorialContent, type TutorialNode } from '../api/tutorial'
+import { uiPrototypeApi } from '../api/ui-prototype'
 import FileBrowser from './FileBrowser.vue'
 import CodeEditor from './CodeEditor.vue'
 import PreviewPanel from './PreviewPanel.vue'
+import UIPrototypePanel from './UIPrototypePanel.vue'
 
 interface Message {
   id: number
@@ -395,6 +423,8 @@ const inputMessage = ref('')
 const isSending = ref(false)
 const isConfirming = ref(false)
 const isStartingPreview = ref(false)
+const isConfirmingUI = ref(false)
+const isRegeneratingUI = ref(false)
 const activeTab = ref('preview')
 const chatHistoryRef = ref<HTMLElement | null>(null)
 const selectedFile = ref<FileNode | null>(null)
@@ -432,6 +462,8 @@ const uploadedFiles = ref<File[]>([])
 const isLoadingConversation = ref(false)
 const AUTO_REFRESH_INTERVAL = 3000
 const conversationFileStages = new Set([
+  'UI_GENERATING',
+  'UI_CONFIRMED',
   'CODE_GENERATING',
   'READY_TO_START',
   'SERVICE_STARTING',
@@ -448,10 +480,11 @@ const canAccessConversationFiles = computed(() => {
 const canAccessFiles = computed(() => canAccessConversationFiles.value)
 
 // 对话阶段配置（生成流程）
+// 状态栏显示的5个阶段
 const generationStages = [
   { key: 'NEED_INPUT', label: '需求输入' },
   { key: 'UNDERSTANDING', label: '理解需求' },
-  { key: 'UNDERSTANDING_CONFIRMED', label: '确认理解' },
+  { key: 'UI_GENERATING', label: '生成UI' },
   { key: 'CODE_GENERATING', label: '生成代码' },
   { key: 'READY_TO_START', label: '确认启动' }
 ]
@@ -460,13 +493,32 @@ const generationStageKeys = generationStages.map(stage => stage.key)
 const stageLabelMap: Record<string, string> = {
   NEED_INPUT: '需求输入',
   UNDERSTANDING: '理解需求',
-  UNDERSTANDING_CONFIRMED: '确认理解',
+  UNDERSTANDING_CONFIRMED: '理解需求',
+  UI_GENERATING: '生成UI',
+  UI_CONFIRMED: '生成UI',
   CODE_GENERATING: '生成代码',
   READY_TO_START: '确认启动',
-  SERVICE_STARTING: '启动服务',
-  PREVIEWING: '预览',
-  COMPLETED: '生成完成',
+  SERVICE_STARTING: '确认启动',
+  PREVIEWING: '确认启动',
+  COMPLETED: '确认启动',
   FAILED: '生成失败'
+}
+
+// 内部状态到显示阶段的映射
+const getDisplayStage = (internalStage: string | null | undefined): string => {
+  if (!internalStage) return 'NEED_INPUT'
+  switch (internalStage) {
+    case 'UNDERSTANDING_CONFIRMED':
+      return 'UNDERSTANDING'  // 确认理解仍显示在"理解需求"步骤
+    case 'UI_CONFIRMED':
+      return 'UI_GENERATING'  // 确认UI仍显示在"生成UI"步骤
+    case 'SERVICE_STARTING':
+    case 'PREVIEWING':
+    case 'COMPLETED':
+      return 'READY_TO_START'  // 这些状态显示在"确认启动"步骤
+    default:
+      return internalStage
+  }
 }
 
 const displayStages = computed(() => {
@@ -683,6 +735,38 @@ const confirmUnderstanding = async (confirmed: boolean) => {
     ElMessage.error('确认失败，请稍后重试')
   } finally {
     isConfirming.value = false
+  }
+}
+
+const confirmUIPrototype = async () => {
+  if (!conversationId.value) return
+  isConfirmingUI.value = true
+  try {
+    await uiPrototypeApi.confirmUIPrototype(conversationId.value)
+    await loadNewConversation(conversationId.value)
+    ElMessage.success('UI 设计已确认，开始生成代码...')
+  } catch (error) {
+    console.error('Failed to confirm UI prototype:', error)
+    ElMessage.error('确认失败，请稍后重试')
+  } finally {
+    isConfirmingUI.value = false
+  }
+}
+
+const regenerateUIPrototype = async () => {
+  if (!conversationId.value) return
+  isRegeneratingUI.value = true
+  try {
+    await uiPrototypeApi.regenerateUIPrototype(conversationId.value)
+    ElMessage.success('UI 原型重新生成中...')
+    setTimeout(() => {
+      loadNewConversation(conversationId.value)
+    }, 2000)
+  } catch (error) {
+    console.error('Failed to regenerate UI prototype:', error)
+    ElMessage.error('重新生成失败，请稍后重试')
+  } finally {
+    isRegeneratingUI.value = false
   }
 }
 

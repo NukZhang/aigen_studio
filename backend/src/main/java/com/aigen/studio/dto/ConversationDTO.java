@@ -25,6 +25,9 @@ public class ConversationDTO {
     private String generatedCodePath;   // 生成的代码路径
     private String serviceStatus;       // 服务状态
     private String previewUrl;          // 预览 URL
+    private String uiPrototypePath;     // UI 原型路径
+    private String uiPrototypeContent;  // UI 原型内容（HTML）
+    private Boolean uiConfirmed;        // 用户是否确认 UI 设计
     private String errorMessage;        // 错误信息
     private LocalDateTime createdAt;    // 创建时间
     private LocalDateTime updatedAt;    // 更新时间

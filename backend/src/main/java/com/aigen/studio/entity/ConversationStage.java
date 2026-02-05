@@ -15,15 +15,24 @@ public enum ConversationStage {
     UNDERSTANDING,
 
     /**
-     * 需求理解确认阶段（等待用户确认）
+     * 需求理解确认阶段（等待用户确认，内部状态，显示在"理解需求"步骤）
      */
     UNDERSTANDING_CONFIRMED,
-
+    
     /**
-     * 代码生成阶段
+     * UI 生成阶段（状态栏第3步：生成UI）
+     */
+    UI_GENERATING,
+    
+    /**
+     * UI 已确认（内部状态，显示在"生成UI"步骤）
+     */
+    UI_CONFIRMED,
+    
+    /**
+     * 代码生成阶段（状态栏第4步：生成代码）
      */
     CODE_GENERATING,
-
     /**
      * 代码生成完成，等待确认启动
      */

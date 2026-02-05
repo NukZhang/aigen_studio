@@ -81,6 +81,24 @@ public class Conversation {
     private String previewUrl;
 
     /**
+     * UI 原型路径
+     */
+    @Column(name = "ui_prototype_path")
+    private String uiPrototypePath;
+
+    /**
+     * UI 原型内容（HTML）
+     */
+    @Column(name = "ui_prototype_content", columnDefinition = "TEXT")
+    private String uiPrototypeContent;
+
+    /**
+     * 用户是否确认 UI 设计
+     */
+    @Column(name = "ui_confirmed")
+    private Boolean uiConfirmed;
+
+    /**
      * 错误信息
      */
     @Column(name = "error_message", columnDefinition = "TEXT")
