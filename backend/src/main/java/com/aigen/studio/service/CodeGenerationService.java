@@ -25,6 +25,7 @@ public class CodeGenerationService {
     private final PromptTaskService promptTaskService;
     private final PreviewScriptService previewScriptService;
     private final UIPrototypeService uiPrototypeService;
+    private final FrontendScaffoldService frontendScaffoldService;
 
     @Value("${iflow.sdk.output-dir:./output}")
     private String outputDir;
@@ -52,6 +53,13 @@ public class CodeGenerationService {
                 log.info("Code generation log: {}", message);
                 sendProgressMessage(conversationId, message, "system");
             });
+
+            Path frontendDir = outputPath.resolve("frontend");
+            frontendScaffoldService.ensureVueScaffoldAndInjectPrototype(
+                    frontendDir,
+                    uiPrototypeHtml,
+                    conversation.getProjectName()
+            );
 
             ensurePreviewScripts(outputPath);
 
