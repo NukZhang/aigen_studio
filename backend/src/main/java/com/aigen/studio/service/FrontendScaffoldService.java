@@ -140,6 +140,7 @@ public class FrontendScaffoldService {
     private void writeAppVueFromPrototype(Path srcDir, String uiPrototypeHtml) throws Exception {
         String body = extractBody(uiPrototypeHtml);
         String style = extractStyle(uiPrototypeHtml);
+        body = stripSideEffectTags(body);
 
         if (body.isBlank()) {
             body = "<div class=\"ui-prototype\"></div>";
@@ -206,6 +207,16 @@ public class FrontendScaffoldService {
             return matcher.group(1).trim();
         }
         return "";
+    }
+
+    private String stripSideEffectTags(String html) {
+        if (html == null || html.isBlank()) {
+            return "";
+        }
+        return html
+                .replaceAll("(?is)<script[^>]*>.*?</script>", "")
+                .replaceAll("(?is)<style[^>]*>.*?</style>", "")
+                .trim();
     }
 
     private String indent(String text, int spaces) {
