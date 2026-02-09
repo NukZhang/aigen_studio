@@ -55,6 +55,9 @@ class PromptTaskServiceTest {
         assertTrue(prompt.contains("javax.servlet"));
         assertTrue(prompt.contains("MyBatis-Plus"));
         assertTrue(prompt.contains("Mapper"));
+        assertTrue(prompt.contains("Character"));
+        assertTrue(prompt.contains("通配符"));
+        assertTrue(prompt.contains("Math.toIntExact"));
     }
 
     @Test

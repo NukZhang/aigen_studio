@@ -75,4 +75,17 @@ public class ConversationController {
         ConversationDTO conversation = conversationService.confirmUnderstanding(id, request);
         return ResponseEntity.ok(conversation);
     }
+
+    /**
+     * 修复 conversation 状态（用于数据修复）
+     */
+    @PostMapping("/new/{id}/fix-stage")
+    public ResponseEntity<ConversationDTO> fixConversationStage(
+            @PathVariable Long id,
+            @RequestBody java.util.Map<String, String> request) {
+        String stage = request.get("stage");
+        log.info("Fixing conversation {} stage to: {}", id, stage);
+        ConversationDTO conversation = conversationService.fixConversationStage(id, stage);
+        return ResponseEntity.ok(conversation);
+    }
 }

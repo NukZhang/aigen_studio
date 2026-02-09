@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>朋友圈</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary-color: #07c160;
+            --primary-hover: #06ad56;
+            --text-primary: #191919;
+            --text-secondary: #576b95;
+            --text-muted: #999999;
+            --background-light: #f5f5f5;
+            --background-white: #ffffff;
+            --border-color: #e5e5e5;
+            --shadow-sm: 0 1px 1px rgba(0, 0, 0, 0.05);
+            --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.1);
+            --radius-md: 4px;
+            --radius-lg: 8px;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+            background: var(--background-light);
+            min-height: 100vh;
+            line-height: 1.5;
+        }
+
+        .app-container {
+            max-width: 480px;
+            margin: 0 auto;
+            background: var(--background-white);
+            min-height: 100vh;
+        }
+
+        /* Header */
+        .header {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            background: var(--background-white);
+            padding: 0.75rem 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .camera-btn {
+            background: none;
+            border: none;
+            color: var(--text-primary);
+            cursor: pointer;
+            padding: 0.25rem;
+        }
+
+        .camera-btn svg {
+            width: 24px;
+            height: 24px;
+            fill: var(--text-primary);
+        }
+
+        .header-title {
+            font-size: 1.125rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .header-title.active {
+            color: var(--primary-color);
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .header-btn {
+            background: none;
+            border: none;
+            color: var(--text-primary);
+            cursor: pointer;
+            padding: 0.5rem;
+        }
+
+        .header-btn svg {
+            width: 22px;
+            height: 22px;
+            fill: var(--text-primary);
+        }
+
+        .search-btn svg {
+            fill: var(--text-primary);
+        }
+
+        /* Content */
+        .content {
+            background: var(--background-light);
+            min-height: calc(100vh - 60px);
+            padding-bottom: 70px;
+        }
+
+        /* User Info Section */
+        .user-info {
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            padding: 1rem;
+            background: var(--background-white);
+            margin-bottom: 0.5rem;
+        }
+
+        .user-details {
+            text-align: right;
+            margin-right: 0.75rem;
+        }
+
+        .user-name {
+            font-size: 0.9375rem;
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        .user-avatar-small {
+            width: 44px;
+            height: 44px;
+            border-radius: var(--radius-md);
+            object-fit: cover;
+        }
+
+        /* Moments Feed */
+        .moments-feed {
+            background: var(--background-white);
+        }
+
+        /* Moment Item */
+        .moment-item {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .moment-header {
+            display: flex;
+            gap: 0.75rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .moment-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: var(--radius-md);
+            object-fit: cover;
+        }
+
+        .moment-content {
+            flex: 1;
+        }
+
+        .moment-user {
+            font-size: 0.9375rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+            margin-bottom: 0.25rem;
+        }
+
+        .moment-text {
+            font-size: 0.9375rem;
+            color: var(--text-primary);
+            line-height: 1.6;
+            margin-bottom: 0.5rem;
+            white-space: pre-wrap;
+        }
+
+        .moment-location {
+            font-size: 0.8125rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        .moment-location svg {
+            width: 14px;
+            height: 14px;
+            fill: var(--text-secondary);
+        }
+
+        .moment-images {
+            display: grid;
+            gap: 2px;
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            margin-bottom: 0.5rem;
+        }
+
+        .moment-images.single {
+            grid-template-columns: 1fr;
+            max-width: 200px;
+        }
+
+        .moment-images.double {
+            grid-template-columns: repeat(2, 1fr);
+            max-width: 250px;
+        }
+
+        .moment-images.multiple {
+            grid-template-columns: repeat(3, 1fr);
+            max-width: 280px;
+        }
+
+        .moment-images.nine {
+            grid-template-columns: repeat(3, 1fr);
+            max-width: 280px;
+        }
+
+        .moment-image {
+            width: 100%;
+            aspect-ratio: 1;
+            object-fit: cover;
+            cursor: pointer;
+            background: var(--background-light);
+        }
+
+        .moment-image:hover {
+            opacity: 0.9;
+        }
+
+        .moment-time {
+            font-size: 0.8125rem;
+            color: var(--text-muted);
+            margin-bottom: 0.5rem;
+        }
+
+        .moment-actions {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .moment-actions-left {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .action-link {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 0.25rem 0;
+        }
+
+        .action-link:hover {
+            opacity: 0.8;
+        }
+
+        .moment-actions-right {
+            position: relative;
+        }
+
+        .more-btn {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 0.5rem;
+            border-radius: var(--radius-md);
+        }
+
+        .more-btn:hover {
+            background: var(--background-light);
+        }
+
+        .more-btn svg {
+            width: 20px;
+            height: 20px;
+            fill: var(--text-secondary);
+        }
+
+        /* Like and Comment Section */
+        .interaction-section {
+            margin-top: 0.5rem;
+            background: var(--background-light);
+            border-radius: var(--radius-md);
+            padding: 0.5rem 0.75rem;
+        }
+
+        .like-users {
+            font-size: 0.8125rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: flex-start;
+            gap: 0.375rem;
+        }
+
+        .like-icon {
+            width: 16px;
+            height: 16px;
+            fill: #ff3b30;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+
+        .like-names {
+            color: var(--text-secondary);
+        }
+
+        .like-names span {
+            color: var(--text-secondary);
+            cursor: pointer;
+        }
+
+        .like-names span:hover {
+            text-decoration: underline;
+        }
+
+        /* Comments */
+        .comments-list {
+            margin-top: 0.375rem;
+        }
+
+        .comment-item {
+            font-size: 0.8125rem;
+            line-height: 1.6;
+            margin-bottom: 0.25rem;
+        }
+
+        .comment-user {
+            color: var(--text-secondary);
+            cursor: pointer;
+        }
+
+        .comment-user:hover {
+            text-decoration: underline;
+        }
+
+        .comment-text {
+            color: var(--text-primary);
+        }
+
+        .comment-reply {
+            color: var(--text-secondary);
+            cursor: pointer;
+        }
+
+        .comment-reply:hover {
+            text-decoration: underline;
+        }
+
+        /* Bottom Navigation */
+        .bottom-nav {
+            position: fixed;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 100%;
+            max-width: 480px;
+            background: var(--background-white);
+            display: flex;
+            justify-content: space-around;
+            padding: 0.625rem 0;
+            border-top: 1px solid var(--border-color);
+            z-index: 100;
+        }
+
+        .nav-item {
+            background: none;
+            border: none;
+            color: var(--text-primary);
+            cursor: pointer;
+            padding: 0.5rem 1rem;
+            border-radius: var(--radius-md);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        .nav-item svg {
+            width: 24px;
+            height: 24px;
+            fill: var(--text-primary);
+        }
+
+        .nav-item span {
+            font-size: 0.6875rem;
+            color: var(--text-primary);
+        }
+
+        .nav-item.active {
+            color: var(--primary-color);
+        }
+
+        .nav-item.active svg {
+            fill: var(--primary-color);
+        }
+
+        .nav-item:hover {
+            background: var(--background-light);
+        }
+
+        /* Responsive */
+        @media (max-width: 480px) {
+            .app-container {
+                box-shadow: none;
+            }
+
+            .bottom-nav {
+                max-width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <button class="camera-btn">
+                    <svg viewBox="0 0 24 24">
+                        <path d="M12 15.2c1.76 0 3.2-1.44 3.2-3.2s-1.44-3.2-3.2-3.2-3.2 1.44-3.2 3.2 1.44 3.2 3.2 3.2zm9-9.2h-2.99L16 4H8l-2.01 2H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H3V8h2v3.2c.45-.52 1.05-.8 1.73-.8h.54c.69 0 1.28.28 1.73.8V8h2v6.2c.45-.52 1.05-.8 1.73-.8h.54c.69 0 1.28.28 1.73.8V8h2v5.2c.45-.52 1.05-.8 1.73-.8h.54c.69 0 1.28.28 1.73.8V8h2v3.2c.45-.52 1.05-.8 1.73-.8h.54c.69 0 1.28.28 1.73.8V8h2v10z"/>
+                    </svg>
+                </button>
+                <span class="header-title">朋友圈</span>
+            </div>
+            <div class="header-right">
+                <button class="header-btn search-btn">
+                    <svg viewBox="0 0 24 24">
+                        <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+                    </svg>
+                </button>
+                <button class="header-btn">
+                    <svg viewBox="0 0 24 24">
+                        <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/>
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- User Info -->
+        <div class="user-info">
+            <div class="user-details">
+                <div class="user-name">我的昵称</div>
+            </div>
+            <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=MyAvatar" alt="我的头像" class="user-avatar-small">
+        </div>
+
+        <!-- Content -->
+        <div class="content">
+            <div class="moments-feed">
+                <!-- Moment 1: 9图布局 -->
+                <article class="moment-item">
+                    <div class="moment-header">
+                        <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=User001" alt="用户头像" class="moment-avatar">
+                        <div class="moment-content">
+                            <div class="moment-user">产品经理Emma</div>
+                            <div class="moment-text">今天和产品团队开了个超长的需求评审会，从上午10点一直到下午2点，终于把下个版本的功能优先级定下来了。虽然累，但看着大家一起头脑风暴的画面，还是很有成就感的！🎯</div>
+                            <div class="moment-location">
+                                <svg viewBox="0 0 24 24">
+                                    <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+                                </svg>
+                                腾讯大厦
+                            </div>
+                            <div class="moment-images nine">
+                                <img src="https://images.unsplash.com/photo-1517048676732-d65bc937f952?w=400&h=400&fit=crop" alt="会议室" class="moment-image">
+                                <img src="https://images.unsplash.com/photo-1556761175-5973dc0f32e7?w=400&h=400&fit=crop" alt="讨论" class="moment-image">
+                                <img src="https://images.unsplash.com/photo-1522071820081-009f0129c71c?w=400&h=400&fit=crop" alt="团队" class="moment-image">
+                                <img src="https://images.unsplash.com/photo-1543269865-cbf427effbad?w=400&h=400&fit=crop" alt="工作" class="moment-image">
+                                <img src="https://images.unsplash.com/photo-1509062522246-3755977927d7?w=400&h=400&fit=crop" alt="白板" class="moment-image">
+                                <img src="https://images.unsplash.com/photo-1552664730-d307ca884978?w=400&h=400&fit=crop" alt="会议" class="moment-image">
+                                <img src="https://images.unsplash.com/photo-1531482615713-2afd69097998?w=400&h=400&fit=crop" alt="讨论2" class="moment-image">
+                                <img src="https://images.unsplash.com/photo-1519389950473-47ba0277781c?w=400&h=400&fit=crop" alt="办公室" class="moment-image">
+                                <img src="https://images.unsplash.com/photo-1522202176988-66273c2fd55f?w=400&h=400&fit=crop" alt="协作" class="moment-image">
+                            </div>
+                            <div class="moment-time">2小时前</div>
+                            <div class="moment-actions">
+                                <div class="moment-actions-left">
+                                    <span class="action-link">👍24</span>
+                                    <span class="action-link">💬8</span>
+                                </div>
+                                <div class="moment-actions-right">
+                                    <button class="more-btn">
+                                        <svg viewBox="0 0 24 24">
+                                            <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="interaction-section">
+                                <div class="like-users">
+                                    <svg class="like-icon" viewBox="0 0 24 24">
+                                        <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+                                    </svg>
+                                    <span class="like-names">
+                                        <span>王思聪</span>、<span>产品张</span>、<span>设计李</span>、<span>开发赵</span>、<span>测试周</span>等24人
+                                    </span>
+                                </div>
+                                <div class="comments-list">
+                                    <div class="comment-item">
+                                        <span class="comment-user">产品张</span>
+                                        <span class="comment-text">辛苦了！下次我请大家喝奶茶~</span>
+                                    </div>
+                                    <div class="comment-item">
+                                        <span class="comment-user">设计李</span>
+                                        <span class="comment-text">下次记得叫我，我带了咖啡☕</span>
+                                    </div>
+                                    <div class="comment-item">
+                                        <span class="comment-user">开发赵</span>
+                                        <span class="comment-text">下次能不能约下午3点，我起不来</span>
+                                        <span class="comment-reply"> · 回复</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </article>
+
+                <!-- Moment 2: 单图布局 -->
+                <article class="moment-item">
+                    <div class="moment-header">
+                        <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=User002" alt="用户头像" class="moment-avatar">
+                        <div class="moment-content">
+                            <div class="moment-user">摄影师小凯</div>
+                            <div class="moment-text">周末去郊外拍的一组照片，原图直出，太喜欢这种氛围感了！📷</div>
+                            <div class="moment-location">
+                                <svg viewBox="0 0 24 24">
+                                    <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+                                </svg>
+                                郊野公园
+                            </div>
+                            <div class="moment-images single">
+                                <img src="https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?w=600&h=800&fit=crop" alt="风景" class="moment-image">
+                            </div>
+                            <div class="moment-time">5小时前</div>
+                            <div class="moment-actions">
+                                <div class="moment-actions-left">
+                                    <span class="action-link">👍156</span>
+                                    <span class="action-link">💬32</span>
+                                </div>
+                                <div class="moment-actions-right">
+                                    <button class="more-btn">
+                                        <svg viewBox="0 0 24 24">
+                                            <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="interaction-section">
+                                <div class="like-users">
+                                    <svg class="like-icon" viewBox="0 0 24 24">
+                                        <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+                                    </svg>
+                                    <span class="like-names">
+                                        <span>模特小花</span>、<span>摄影老刘</span>、<span>后期阿明</span>等156人
+                                    </span>
+                                </div>
+                                <div class="comments-list">
+                                    <div class="comment-item">
+                                        <span class="comment-user">模特小花</span>
+                                        <span class="comment-text">这组照片太绝了！求原图！</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </article>
+
+                <!-- Moment 3: 4图布局 -->
+                <article class="moment-item">
+                    <div class="moment-header">
+                        <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=User003" alt="用户头像" class="moment-avatar">
+                        <div class="moment-content">
+                            <div class="moment-user">美食家大胃王</div>
+                            <div class="moment-text">发现一家宝藏日料店，食材新鲜，价格实惠，强烈推荐！🍣🍱</div>
+                            <div class="moment-location">
+                                <svg viewBox="0 0 24 24">
+                                    <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+                                </svg>
+                                筑地日料·匠心
+                            </div>
+                            <div class="moment-images multiple">
+                                <img src="https://images.unsplash.com/photo-1579871494447-9811cf80d66c?w=400&h=400&fit=crop" alt="寿司拼盘" class="moment-image">
+                                <img src="https://images.unsplash.com/photo-1553621042-f6e147245754?w=400&h=400&fit=crop" alt="刺身" class="moment-image">
+                                <img src="https://images.unsplash.com/photo-1559339352-11d035aa65de?w=400&h=400&fit=crop" alt="日料" class="moment-image">
+                                <img src="https://images.unsplash.com/photo-1540189549336-e6e99c3679fe?w=400&h=400&fit=crop" alt="沙拉" class="moment-image">
+                            </div>
+                            <div class="moment-time">8小时前</div>
+                            <div class="moment-actions">
+                                <div class="moment-actions-left">
+                                    <span class="action-link">👍89</span>
+                                    <span class="action-link">💬15</span>
+                                </div>
+                                <div class="moment-actions-right">
+                                    <button class="more-btn">
+                                        <svg viewBox="0 0 24 24">
+                                            <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="interaction-section">
+                                <div class="like-users">
+                                    <svg class="like-icon" viewBox="0 0 24 24">
+                                        <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+                                    </svg>
+                                    <span class="like-names">
+                                        <span>吃货小分队</span>、<span>日料控</span>、<span>美食博主</span>等89人
+                                    </span>
+                                </div>
+                                <div class="comments-list">
+                                    <div class="comment-item">
+                                        <span class="comment-user">日料控</span>
+                                        <span class="comment-text">地址在哪？人均消费多少？</span>
+                                    </div>
+                                    <div class="comment-item">
+                                        <span class="comment-user">美食家大胃王</span>
+                                        <span class="comment-text">回复 <span class="comment-user">日料控</span>：在陆家嘴环路，人均200左右</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </article>
+
+                <!-- Moment 4: 双图布局 -->
+                <article class="moment-item">
+                    <div class="moment-header">
+                        <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=User004" alt="用户头像" class="moment-avatar">
+                        <div class="moment-content">
+                            <div class="moment-user">程序员的日常</div>
+                            <div class="moment-text">重构完一个祖传代码模块，测试全部通过，成就感拉满！💻虽然过程很痛苦，但看到代码变得更优雅，一切都值得了。重构一时爽，一直重构一直爽！</div>
+                            <div class="moment-images double">
+                                <img src="https://images.unsplash.com/photo-1555066931-4365d14bab8c?w=400&h=400&fit=crop" alt="代码" class="moment-image">
+                                <img src="https://images.unsplash.com/photo-1461749280684-dccba630e2f6?w=400&h=400&fit=crop" alt="编程" class="moment-image">
+                            </div>
+                            <div class="moment-time">昨天 22:30</div>
+                            <div class="moment-actions">
+                                <div class="moment-actions-left">
+                                    <span class="action-link">👍42</span>
+                                    <span class="action-link">💬6</span>
+                                </div>
+                                <div class="moment-actions-right">
+                                    <button class="more-btn">
+                                        <svg viewBox="0 0 24 24">
+                                            <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="interaction-section">
+                                <div class="like-users">
+                                    <svg class="like-icon" viewBox="0 0 24 24">
+                                        <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+                                    </svg>
+                                    <span class="like-names">
+                                        <span>技术总监</span>、<span>架构师老王</span>等42人
+                                    </span>
+                                </div>
+                                <div class="comments-list">
+                                    <div class="comment-item">
+                                        <span class="comment-user">架构师老王</span>
+                                        <span class="comment-text">小伙子有前途，这代码写得不错！</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </article>
+
+                <!-- Moment 5: 3图布局 -->
+                <article class="moment-item">
+                    <div class="moment-header">
+                        <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=User005" alt="用户头像" class="moment-avatar">
+                        <div class="moment-content">
+                            <div class="moment-user">旅行达人Lily</div>
+                            <div class="moment-text">云南之旅第三天，丽江古城的夜色太美了，灯火阑珊，仿佛穿越回古代。🌙下次一定要带爸妈来看看！</div>
+                            <div class="moment-location">
+                                <svg viewBox="0 0 24 24">
+                                    <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+                                </svg>
+                                丽江古城
+                            </div>
+                            <div class="moment-images multiple">
+                                <img src="https://images.unsplash.com/photo-1528164344705-47542687000d?w=400&h=400&fit=crop" alt="古城夜景" class="moment-image">
+                                <img src="https://images.unsplash.com/photo-1470770841072-f978cf4d019e?w=400&h=400&fit=crop" alt="古镇" class="moment-image">
+                                <img src="https://images.unsplash.com/photo-1513828583688-c52646db42da?w=400&h=400&fit=crop" alt="夜景" class="moment-image">
+                            </div>
+                            <div class="moment-time">昨天 18:45</div>
+                            <div class="moment-actions">
+                                <div class="moment-actions-left">
+                                    <span class="action-link">👍203</span>
+                                    <span class="action-link">💬45</span>
+                                </div>
+                                <div class="moment-actions-right">
+                                    <button class="more-btn">
+                                        <svg viewBox="0 0 24 24">
+                                            <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="interaction-section">
+                                <div class="like-users">
+                                    <svg class="like-icon" viewBox="0 0 24 24">
+                                        <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+                                    </svg>
+                                    <span class="like-names">
+                                        <span>户外爱好者</span>、<span>摄影师小凯</span>、<span>旅行控</span>等203人
+                                    </span>
+                                </div>
+                                <div class="comments-list">
+                                    <div class="comment-item">
+                                        <span class="comment-user">旅行控</span>
+                                        <span class="comment-text">求详细攻略！</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </article>
+            </div>
+        </div>
+
+        <!-- Bottom Navigation -->
+        <nav class="bottom-nav">
+            <button class="nav-item">
+                <svg viewBox="0 0 24 24">
+                    <path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/>
+                </svg>
+                <span>通讯录</span>
+            </button>
+            <button class="nav-item">
+                <svg viewBox="0 0 24 24">
+                    <path d="M4 10.5c-.83 0-1.5.67-1.5 1.5s.67 1.5 1.5 1.5 1.5-.67 1.5-1.5-.67-1.5-1.5-1.5zm0-6c-.83 0-1.5.67-1.5 1.5S3.17 7.5 4 7.5 5.5 6.83 5.5 6 4.83 4.5 4 4.5zm0 12c-.83 0-1.5.68-1.5 1.5s.68 1.5 1.5 1.5 1.5-.68 1.5-1.5-.67-1.5-1.5-1.5zM7 19h14v-2H7v2zm0-6h14v-2H7v2zm0-8v2h14V5H7z"/>
+                </svg>
+                <span>发现</span>
+            </button>
+            <button class="nav-item active">
+                <svg viewBox="0 0 24 24">
+                    <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/>
+                </svg>
+                <span>朋友圈</span>
+            </button>
+            <button class="nav-item">
+                <svg viewBox="0 0 24 24">
+                    <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
+                </svg>
+                <span>我</span>
+            </button>
+        </nav>
+    </div>
+</body>
+</html>

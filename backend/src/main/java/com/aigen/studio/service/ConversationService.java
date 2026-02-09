@@ -349,6 +349,9 @@ public class ConversationService {
         dto.setGeneratedCodePath(conversation.getGeneratedCodePath());
         dto.setServiceStatus(conversation.getServiceStatus());
         dto.setPreviewUrl(conversation.getPreviewUrl());
+        dto.setUiPrototypePath(conversation.getUiPrototypePath());
+        dto.setUiPrototypeContent(conversation.getUiPrototypeContent());
+        dto.setUiConfirmed(conversation.getUiConfirmed());
         dto.setErrorMessage(conversation.getErrorMessage());
         dto.setCreatedAt(conversation.getCreatedAt());
         dto.setUpdatedAt(conversation.getUpdatedAt());
@@ -370,5 +373,45 @@ public class ConversationService {
         dto.setMessages(messageDTOs);
 
         return dto;
+    }
+
+    /**
+     * 修复 conversation 状态（用于数据修复）
+     */
+    public ConversationDTO fixConversationStage(Long conversationId, String stage) {
+        log.info("Fixing conversation {} stage to: {}", conversationId, stage);
+
+        Conversation conversation = conversationRepository.findById(conversationId)
+                .orElseThrow(() -> new RuntimeException("Conversation not found: " + conversationId));
+
+        try {
+            // 转换阶段枚举
+            ConversationStage newStage = ConversationStage.valueOf(stage);
+            conversation.setStage(newStage);
+
+            // 如果是 UI_CONFIRMED 阶段，设置 ui_confirmed 为 true
+            if (newStage == ConversationStage.UI_CONFIRMED) {
+                conversation.setUiConfirmed(true);
+                // 清除错误信息
+                conversation.setErrorMessage(null);
+            }
+
+            // 如果是从 FAILED 状态修复，也清除错误信息
+            if (conversation.getStatus() == Conversation.ConversationStatus.FAILED) {
+                conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+                conversation.setErrorMessage(null);
+            }
+
+            conversation = conversationRepository.save(conversation);
+            log.info("Successfully fixed conversation {} stage to {}", conversationId, stage);
+
+            return convertToDTO(conversation);
+        } catch (IllegalArgumentException e) {
+            log.error("Invalid stage: {}", stage, e);
+            throw new RuntimeException("Invalid stage: " + stage + ". Valid stages are: " +
+                    java.util.Arrays.stream(ConversationStage.values())
+                            .map(Enum::name)
+                            .reduce((a, b) -> a + ", " + b));
+        }
     }
 }

@@ -75,10 +75,10 @@
         <div class="iphone-border">
           <div class="dynamic-island"></div>
           <iframe
-            :src="uiHtmlDataUrl"
+            :srcdoc="uiHtml"
             class="preview-frame"
             frameborder="0"
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-presentation"
           ></iframe>
         </div>
       </div>
@@ -103,11 +103,6 @@ const conversation = ref<ConversationDTO | null>(null)
 const uiHtml = ref<string | null>(null)
 const isConfirming = ref(false)
 const isRegenerating = ref(false)
-
-const uiHtmlDataUrl = computed(() => {
-  if (!uiHtml.value) return ''
-  return `data:text/html;charset=utf-8,${encodeURIComponent(uiHtml.value)}`
-})
 
 const fetchConversation = async () => {
   if (!props.conversationId) return

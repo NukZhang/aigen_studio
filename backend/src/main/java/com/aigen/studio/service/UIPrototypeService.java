@@ -84,7 +84,7 @@ public class UIPrototypeService {
                 log.error("Error generating UI prototype", error);
                 Conversation conv = conversationRepository.findById(finalConversationId)
                         .orElse(null);
-                if (conv != null) {
+                if (conv != null && conv.getStage() != ConversationStage.UI_READY) {
                     conv.setStage(ConversationStage.FAILED);
                     conv.setErrorMessage("UI 原型生成失败: " + error.getMessage());
                     conversationRepository.save(conv);
@@ -95,12 +95,33 @@ public class UIPrototypeService {
             public void onComplete() {
                 // 保存生成的 HTML
                 String html = htmlContent.toString();
-                if (html.contains("<html") && html.contains("</html>")) {
-                    saveUIPrototype(finalConversationId, html);
+                String resolvedHtml = extractHtml(html);
+                Path htmlFile = getUIPrototypeDir(finalConversationId).resolve("index.html");
+                if (resolvedHtml == null) {
+                    try {
+                        if (Files.exists(htmlFile)) {
+                            String fileContent = Files.readString(htmlFile);
+                            resolvedHtml = extractHtml(fileContent);
+                            if (resolvedHtml != null) {
+                                log.info("Loaded UI prototype HTML from file for conversation: {}", finalConversationId);
+                            }
+                        }
+                    } catch (Exception e) {
+                        log.warn("Failed to read UI prototype file for conversation: {}", finalConversationId, e);
+                    }
+                }
+
+                if (resolvedHtml != null) {
+                    if (!Files.exists(htmlFile)) {
+                        htmlFile = saveUIPrototype(finalConversationId, resolvedHtml);
+                    }
                     Conversation conv = conversationRepository.findById(finalConversationId)
                             .orElse(null);
                     if (conv != null) {
-                        conv.setUiPrototypeContent(html);
+                        conv.setUiPrototypeContent(resolvedHtml);
+                        conv.setUiPrototypePath(htmlFile.toString());
+                        conv.setStage(ConversationStage.UI_READY);
+                        conv.setErrorMessage(null);
                         conversationRepository.save(conv);
                     }
                     log.info("UI prototype saved successfully for conversation: {}", finalConversationId);
@@ -114,7 +135,7 @@ public class UIPrototypeService {
     /**
      * 保存 UI 原型到文件系统
      */
-    public void saveUIPrototype(Long conversationId, String htmlContent) {
+    public Path saveUIPrototype(Long conversationId, String htmlContent) {
         try {
             Path dir = getUIPrototypeDir(conversationId);
             Files.createDirectories(dir);
@@ -123,6 +144,7 @@ public class UIPrototypeService {
             Files.write(htmlFile, htmlContent.getBytes(), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
 
             log.info("UI prototype saved to: {}", htmlFile);
+            return htmlFile;
         } catch (Exception e) {
             log.error("Failed to save UI prototype for conversation: {}", conversationId, e);
             throw new RuntimeException("Failed to save UI prototype", e);
@@ -219,5 +241,31 @@ public class UIPrototypeService {
     private Path getUIPrototypeDir(Long conversationId) {
         String baseDir = outputDir.startsWith("/") ? outputDir : Paths.get(System.getProperty("user.dir"), outputDir).toString();
         return Paths.get(baseDir, "conversation-" + conversationId, "ui-prototype");
+    }
+
+    private String extractHtml(String content) {
+        if (content == null) {
+            return null;
+        }
+        int htmlEnd = content.lastIndexOf("</html>");
+        if (htmlEnd < 0) {
+            return null;
+        }
+
+        int docTypeIndex = indexOfIgnoreCase(content, "<!doctype");
+        int htmlStart = content.indexOf("<html");
+        int start = htmlStart;
+        if (docTypeIndex >= 0 && (htmlStart < 0 || docTypeIndex < htmlStart)) {
+            start = docTypeIndex;
+        }
+        if (start < 0 || htmlEnd <= start) {
+            return null;
+        }
+
+        return content.substring(start, htmlEnd + "</html>".length());
+    }
+
+    private int indexOfIgnoreCase(String content, String needle) {
+        return content.toLowerCase().indexOf(needle.toLowerCase());
     }
 }

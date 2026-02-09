@@ -92,7 +92,7 @@ describe('Workspace stage indicator', () => {
     const wrapper = await mountWorkspaceWithStage('PREVIEWING')
     const labels = wrapper.findAll('.stage-item .stage-label').map(node => node.text())
 
-    expect(labels).toEqual(['需求输入', '理解需求', '确认理解', '生成代码', '确认启动'])
+    expect(labels).toEqual(['需求输入', '理解需求', '生成UI', '生成代码', '确认启动'])
 
     wrapper.unmount()
   })
@@ -115,6 +115,18 @@ describe('Workspace stage indicator', () => {
     const lastLabel = items[items.length - 1].find('.stage-label').text()
 
     expect(lastLabel).toBe('生成完成')
+
+    wrapper.unmount()
+  })
+
+  it('treats UI_READY as generating UI stage', async () => {
+    const wrapper = await mountWorkspaceWithStage('UI_READY')
+    const items = wrapper.findAll('.stage-item')
+    const labels = items.map(item => item.find('.stage-label').text())
+    const uiIndex = labels.indexOf('生成UI')
+
+    expect(uiIndex).toBeGreaterThanOrEqual(0)
+    expect(items[uiIndex].classes()).toContain('active')
 
     wrapper.unmount()
   })

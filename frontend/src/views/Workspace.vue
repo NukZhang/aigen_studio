@@ -124,7 +124,7 @@
       </div>
 
       <!-- UI 原型确认面板 -->
-      <div class="ui-confirm-panel" v-if="conversation?.stage === 'UI_GENERATING' && conversation.uiPrototypeContent && !conversation.uiConfirmed">
+      <div class="ui-confirm-panel" v-if="(conversation?.stage === 'UI_GENERATING' || conversation?.stage === 'UI_READY') && conversation.uiPrototypeContent && !conversation.uiConfirmed">
         <div class="confirm-header">
           <el-icon><Monitor /></el-icon>
           <span>UI 原型已生成</span>
@@ -463,6 +463,7 @@ const isLoadingConversation = ref(false)
 const AUTO_REFRESH_INTERVAL = 3000
 const conversationFileStages = new Set([
   'UI_GENERATING',
+  'UI_READY',
   'UI_CONFIRMED',
   'CODE_GENERATING',
   'READY_TO_START',
@@ -495,6 +496,7 @@ const stageLabelMap: Record<string, string> = {
   UNDERSTANDING: '理解需求',
   UNDERSTANDING_CONFIRMED: '理解需求',
   UI_GENERATING: '生成UI',
+  UI_READY: '生成UI',
   UI_CONFIRMED: '生成UI',
   CODE_GENERATING: '生成代码',
   READY_TO_START: '确认启动',
@@ -510,6 +512,7 @@ const getDisplayStage = (internalStage: string | null | undefined): string => {
   switch (internalStage) {
     case 'UNDERSTANDING_CONFIRMED':
       return 'UNDERSTANDING'  // 确认理解仍显示在"理解需求"步骤
+    case 'UI_READY':
     case 'UI_CONFIRMED':
       return 'UI_GENERATING'  // 确认UI仍显示在"生成UI"步骤
     case 'SERVICE_STARTING':
@@ -536,6 +539,9 @@ const displayStages = computed(() => {
 
 const normalizeStageForProgress = (stage?: string | null) => {
   if (!stage) return null
+  if (stage === 'UI_READY' || stage === 'UI_CONFIRMED') {
+    return 'UI_GENERATING'
+  }
   if (stage === 'SERVICE_STARTING' || stage === 'PREVIEWING' || stage === 'COMPLETED' || stage === 'FAILED') {
     return 'READY_TO_START'
   }

@@ -26,6 +26,7 @@ public class CodeGenerationService {
     private final PreviewScriptService previewScriptService;
     private final UIPrototypeService uiPrototypeService;
     private final FrontendScaffoldService frontendScaffoldService;
+    private final BackendGenerationFixer backendGenerationFixer;
 
     @Value("${iflow.sdk.output-dir:./output}")
     private String outputDir;
@@ -53,6 +54,8 @@ public class CodeGenerationService {
                 log.info("Code generation log: {}", message);
                 sendProgressMessage(conversationId, message, "system");
             });
+
+            backendGenerationFixer.fixGeneratedBackend(outputPath.resolve("backend"));
 
             Path frontendDir = outputPath.resolve("frontend");
             frontendScaffoldService.ensureVueScaffoldAndInjectPrototype(

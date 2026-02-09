@@ -1,0 +1,841 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8 name="viewport"">
+    <meta content="width=device-width, initial-scale=1.0">
+    <title>新春祝福语生成器</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary-color: #e02e24;
+            --primary-hover: #c41e18;
+            --secondary-color: #ffb900;
+            --text-primary: #333333;
+            --text-secondary: #666666;
+            --text-light: #999999;
+            --background-light: #fff8f0;
+            --background-white: #ffffff;
+            --border-color: #f0e6d3;
+            --shadow-sm: 0 2px 8px rgba(224, 46, 36, 0.1);
+            --shadow-md: 0 4px 16px rgba(224, 46, 36, 0.15);
+            --shadow-lg: 0 8px 32px rgba(224, 46, 36, 0.2);
+            --radius-md: 12px;
+            --radius-lg: 20px;
+            --radius-full: 9999px;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+            background: linear-gradient(135deg, #ffb900 0%, #e02e24 50%, #8b0000 100%);
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+
+        .app-container {
+            max-width: 400px;
+            margin: 0 auto;
+            background: var(--background-white);
+            min-height: 100vh;
+            position: relative;
+            overflow-x: hidden;
+        }
+
+        /* Header */
+        .header {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            background: linear-gradient(135deg, #e02e24 0%, #8b0000 100%);
+            padding: 1rem;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--secondary-color);
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+
+        .header-icon {
+            font-size: 1.5rem;
+        }
+
+        /* Content */
+        .content {
+            padding: 1rem;
+            background: var(--background-light);
+            min-height: calc(100vh - 60px);
+            padding-bottom: 100px;
+        }
+
+        /* Banner */
+        .banner {
+            background: linear-gradient(135deg, #ffb900 0%, #ff6b00 100%);
+            border-radius: var(--radius-lg);
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+            text-align: center;
+            box-shadow: var(--shadow-md);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .banner::before {
+            content: '🧧';
+            position: absolute;
+            top: -10px;
+            left: -10px;
+            font-size: 3rem;
+            opacity: 0.3;
+            animation: float 3s ease-in-out infinite;
+        }
+
+        .banner::after {
+            content: '🎊';
+            position: absolute;
+            bottom: -10px;
+            right: -10px;
+            font-size: 3rem;
+            opacity: 0.3;
+            animation: float 3s ease-in-out infinite reverse;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+        }
+
+        .banner-title {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #8b0000;
+            margin-bottom: 0.5rem;
+        }
+
+        .banner-subtitle {
+            font-size: 0.875rem;
+            color: #8b0000;
+            opacity: 0.8;
+        }
+
+        /* Generator Card */
+        .generator-card {
+            background: var(--background-white);
+            border-radius: var(--radius-md);
+            padding: 1.25rem;
+            margin-bottom: 1rem;
+            box-shadow: var(--shadow-sm);
+            border: 2px solid var(--border-color);
+        }
+
+        .card-title {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--primary-color);
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        /* Receiver Input */
+        .input-group {
+            margin-bottom: 1rem;
+        }
+
+        .input-label {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+            display: block;
+        }
+
+        .text-input {
+            width: 100%;
+            padding: 0.875rem 1rem;
+            border: 2px solid var(--border-color);
+            border-radius: var(--radius-md);
+            font-size: 0.9375rem;
+            outline: none;
+            transition: border-color 0.3s, box-shadow 0.3s;
+            background: var(--background-white);
+        }
+
+        .text-input:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(224, 46, 36, 0.1);
+        }
+
+        /* Category Selection */
+        .category-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .category-btn {
+            padding: 0.75rem 0.5rem;
+            border: 2px solid var(--border-color);
+            border-radius: var(--radius-md);
+            background: var(--background-white);
+            cursor: pointer;
+            transition: all 0.3s;
+            text-align: center;
+        }
+
+        .category-btn:hover {
+            border-color: var(--primary-color);
+            background: rgba(224, 46, 36, 0.05);
+        }
+
+        .category-btn.active {
+            border-color: var(--primary-color);
+            background: var(--primary-color);
+            color: white;
+        }
+
+        .category-icon {
+            font-size: 1.5rem;
+            margin-bottom: 0.25rem;
+            display: block;
+        }
+
+        .category-name {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .category-btn.active .category-name {
+            color: white;
+        }
+
+        /* Generate Button */
+        .generate-btn {
+            width: 100%;
+            padding: 1rem 1.5rem;
+            background: linear-gradient(135deg, #e02e24 0%, #8b0000 100%);
+            border: none;
+            border-radius: var(--radius-md);
+            color: white;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            box-shadow: var(--shadow-md);
+        }
+
+        .generate-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-lg);
+        }
+
+        .generate-btn:active {
+            transform: translateY(0);
+        }
+
+        .generate-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Result Card */
+        .result-card {
+            background: linear-gradient(135deg, #fff8f0 0%, #fff 100%);
+            border-radius: var(--radius-md);
+            padding: 1.25rem;
+            margin-bottom: 1rem;
+            border: 2px dashed var(--primary-color);
+            display: none;
+            animation: fadeIn 0.5s ease-out;
+        }
+
+        .result-card.show {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .result-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .result-avatar {
+            width: 48px;
+            height: 48px;
+            border-radius: var(--radius-md);
+            object-fit: cover;
+            border: 2px solid var(--primary-color);
+        }
+
+        .result-receiver {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .result-label {
+            font-size: 0.75rem;
+            color: var(--text-light);
+        }
+
+        .result-content {
+            background: var(--background-white);
+            border-radius: var(--radius-md);
+            padding: 1rem;
+            margin-bottom: 1rem;
+            border: 1px solid var(--border-color);
+            position: relative;
+        }
+
+        .result-text {
+            font-size: 1rem;
+            color: var(--text-primary);
+            line-height: 1.8;
+            text-align: center;
+        }
+
+        .result-actions {
+            display: flex;
+            gap: 0.75rem;
+        }
+
+        .action-btn {
+            flex: 1;
+            padding: 0.75rem;
+            border: 2px solid var(--border-color);
+            border-radius: var(--radius-md);
+            background: var(--background-white);
+            cursor: pointer;
+            font-size: 0.875rem;
+            font-weight: 500;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.375rem;
+        }
+
+        .action-btn:hover {
+            border-color: var(--primary-color);
+            background: rgba(224, 46, 36, 0.05);
+        }
+
+        .action-btn.primary {
+            background: var(--primary-color);
+            border-color: var(--primary-color);
+            color: white;
+        }
+
+        .action-btn.primary:hover {
+            background: var(--primary-hover);
+        }
+
+        /* Image Display */
+        .blessing-image {
+            margin-top: 1rem;
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .blessing-image img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        /* Templates Section */
+        .templates-section {
+            margin-top: 1.5rem;
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .section-title {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .see-all {
+            font-size: 0.8125rem;
+            color: var(--primary-color);
+            cursor: pointer;
+        }
+
+        .template-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.75rem;
+        }
+
+        .template-card {
+            background: var(--background-white);
+            border-radius: var(--radius-md);
+            padding: 1rem;
+            box-shadow: var(--shadow-sm);
+            cursor: pointer;
+            transition: all 0.3s;
+            border: 2px solid transparent;
+        }
+
+        .template-card:hover {
+            border-color: var(--primary-color);
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .template-image {
+            width: 100%;
+            aspect-ratio: 4/3;
+            border-radius: var(--radius-sm);
+            object-fit: cover;
+            margin-bottom: 0.5rem;
+        }
+
+        .template-title {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 0.25rem;
+        }
+
+        .template-desc {
+            font-size: 0.75rem;
+            color: var(--text-light);
+        }
+
+        /* Bottom Actions */
+        .bottom-actions {
+            position: fixed;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 100%;
+            max-width: 400px;
+            background: var(--background-white);
+            padding: 1rem;
+            box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.1);
+            z-index: 100;
+        }
+
+        .create-blessing {
+            width: 100%;
+            padding: 1rem;
+            background: linear-gradient(135deg, #ffb900 0%, #ff6b00 100%);
+            border: none;
+            border-radius: var(--radius-md);
+            color: white;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+
+        .create-blessing:hover {
+            transform: scale(1.02);
+            box-shadow: 0 4px 20px rgba(255, 107, 0, 0.4);
+        }
+
+        /* Toast */
+        .toast {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 1rem 2rem;
+            border-radius: var(--radius-md);
+            font-size: 0.9375rem;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s;
+        }
+
+        .toast.show {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        /* Loading */
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 2rem;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--border-color);
+            border-top-color: var(--primary-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Responsive */
+        @media (max-width: 400px) {
+            .app-container {
+                box-shadow: none;
+            }
+
+            .bottom-actions {
+                max-width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="header">
+            <h1>
+                <span class="header-icon">🏮</span>
+                新春祝福语生成器
+            </h1>
+        </header>
+
+        <!-- Content -->
+        <div class="content">
+            <!-- Banner -->
+            <div class="banner">
+                <div class="banner-title">🎉 新年快乐 🎊</div>
+                <div class="banner-subtitle">生成专属新春祝福，传递温暖心意</div>
+            </div>
+
+            <!-- Generator Card -->
+            <div class="generator-card">
+                <div class="card-title">
+                    <span>✨</span>
+                    创建祝福
+                </div>
+
+                <!-- Receiver Input -->
+                <div class="input-group">
+                    <label class="input-label">发送给</label>
+                    <input type="text" class="text-input" id="receiverInput" placeholder="输入收件人名字，如：张三">
+                </div>
+
+                <!-- Category Selection -->
+                <div class="input-group">
+                    <label class="input-label">祝福类型</label>
+                    <div class="category-grid">
+                        <button class="category-btn active" data-category="family">
+                            <span class="category-icon">👨‍👩‍👧‍👦</span>
+                            <span class="category-name">家人</span>
+                        </button>
+                        <button class="category-btn" data-category="friend">
+                            <span class="category-icon">👫</span>
+                            <span class="category-name">朋友</span>
+                        </button>
+                        <button class="category-btn" data-category="colleague">
+                            <span class="category-icon">💼</span>
+                            <span class="category-name">同事</span>
+                        </button>
+                        <button class="category-btn" data-category="boss">
+                            <span class="category-icon">🏆</span>
+                            <span class="category-name">领导</span>
+                        </button>
+                        <button class="category-btn" data-category="lover">
+                            <span class="category-icon">💕</span>
+                            <span class="category-name">爱人</span>
+                        </button>
+                        <button class="category-btn" data-category="custom">
+                            <span class="category-icon">🎁</span>
+                            <span class="category-name">自定义</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Generate Button -->
+                <button class="generate-btn" id="generateBtn">
+                    <span>🎊</span>
+                    生成专属祝福
+                </button>
+            </div>
+
+            <!-- Loading -->
+            <div class="loading" id="loading">
+                <div class="loading-spinner"></div>
+                <p style="color: var(--text-secondary);">正在生成专属祝福...</p>
+            </div>
+
+            <!-- Result Card -->
+            <div class="result-card" id="resultCard">
+                <div class="result-header">
+                    <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=Receiver" alt="收件人头像" class="result-avatar" id="resultAvatar">
+                    <div>
+                        <div class="result-label">发送给</div>
+                        <div class="result-receiver" id="resultReceiver">张三</div>
+                    </div>
+                </div>
+                <div class="result-content">
+                    <div class="result-text" id="resultText">
+                        祝福语将显示在这里...
+                    </div>
+                </div>
+                <div class="result-actions">
+                    <button class="action-btn" id="copyBtn">
+                        <span>📋</span>
+                        复制文字
+                    </button>
+                    <button class="action-btn primary" id="shareBtn">
+                        <span>📤</span>
+                        分享图片
+                    </button>
+                </div>
+                <div class="blessing-image" id="blessingImage">
+                    <img class="blessing-image" src="https://images.unsplash.com/photo-1543002588-bfa74002ed7e?w=400&h=600&fit=crop" alt="祝福图片">
+                </div>
+            </div>
+
+            <!-- Templates Section -->
+            <div class="templates-section">
+                <div class="section-header">
+                    <div class="section-title">
+                        <span>🎨</span>
+                        热门模板
+                    </div>
+                    <span class="see-all">查看全部 ></span>
+                </div>
+                <div class="template-grid">
+                    <div class="template-card">
+                        <img src="https://images.unsplash.com/photo-1542596594-649edbc13630?w=400&h=300&fit=crop" alt="新年祝福" class="template-image">
+                        <div class="template-title">新春大吉</div>
+                        <div class="template-desc">适合发送给所有亲友</div>
+                    </div>
+                    <div class="template-card">
+                        <img src="https://images.unsplash.com/photo-1526045478516-99145907023c?w=400&h=300&fit=crop" alt="财源滚滚" class="template-image">
+                        <div class="template-title">财源广进</div>
+                        <div class="template-desc">适合商务场合</div>
+                    </div>
+                    <div class="template-card">
+                        <img src="https://images.unsplash.com/photo-1519681393784-d120267933ba?w=400&h=300&fit=crop" alt="阖家欢乐" class="template-image">
+                        <div class="template-title">阖家欢乐</div>
+                        <div class="template-desc">适合家人群发</div>
+                    </div>
+                    <div class="template-card">
+                        <img src="https://images.unsplash.com/photo-1452587925148-ce544e77e70d?w=400&h=300&fit=crop" alt="心想事成" class="template-image">
+                        <div class="template-title">心想事成</div>
+                        <div class="template-desc">通用祝福语</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bottom Actions -->
+        <div class="bottom-actions">
+            <button class="create-blessing" id="createBlessing">
+                <span>🎉</span>
+                创建我的祝福
+            </button>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast" id="toast">已复制到剪贴板</div>
+
+    <script>
+        // 祝福语数据
+        const blessings = {
+            family: [
+                "亲爱的{receiver}，新的一年，愿您福寿安康，笑口常开！🙏🙏🙏",
+                "{receiver}，感谢您一直以来的付出与陪伴，祝您新春快乐，阖家幸福！",
+                "愿{receiver}在新的一年里，身体健康，万事如意，平安喜乐！❤️",
+                "{receiver}，新年到祝福到，愿您和家人幸福美满，快乐常在！🎊"
+            ],
+            friend: [
+                "{receiver}，新年快乐！愿你新的一年事业有成，爱情甜蜜！✨",
+                "亲爱的{receiver}，感谢有你，新春祝福送给你，愿一切美好如期而至！🌟",
+                "{receiver}，新的一年愿你心想事成，前程似锦！🚀",
+                "朋友{receiver}，新年好！愿我们的友谊天长地久！🎉"
+            ],
+            colleague: [
+                "{receiver}，感谢您一直以来的支持与帮助，新年快乐，工作顺利！💼",
+                "祝{receiver}在新的一年里，事业蒸蒸日上，业绩腾飞！📈",
+                "{receiver}，新春佳节之际，祝您阖家欢乐，万事如意！🏆",
+                "感谢{receiver}的辛勤付出，祝您新年快乐，鹏程万里！🌈"
+            ],
+            boss: [
+                "{receiver}，感谢您的悉心指导与栽培，新年祝您事业长青，宏图大展！🎯",
+                "祝{receiver}在新的一年里，财源广进，步步高升！💰",
+                "{receiver}，感谢您提供的平台与机会，新年快乐，阖家幸福！🏮",
+                "祝尊敬的{receiver}：新春快乐，万事如意，事业更上一层楼！⭐"
+            ],
+            lover: [
+                "亲爱的{receiver}，遇见你是我最大的幸运，新年快乐，我爱你！💕",
+                "{receiver}，愿与你携手共度每一个春夏秋冬，新年快乐，永远爱你！🌹",
+                "亲爱的{receiver}，感谢你出现在我的生命里，新年愿我们一直甜蜜幸福！🎀",
+                "{receiver}，你是我的阳光，新年快乐，爱你到永远！☀️"
+            ],
+            custom: [
+                "{receiver}，新年到福气到，愿你新的一年里好运连连！🍀",
+                "祝{receiver}新春快乐，万事如意，笑口常开！😊",
+                "{receiver}，在新的一年里，愿你所有的梦想都能实现！🌈",
+                "新年快乐！{receiver}，愿这个美好的一年带给你无尽的喜悦！🎊"
+            ]
+        };
+
+        // 祝福图片
+        const blessingImages = [
+            "https://images.unsplash.com/photo-1543002588-bfa74002ed7e?w=400&h=600&fit=crop",
+            "https://images.unsplash.com/photo-1526045478516-99145907023c?w=400&h=600&fit=crop",
+            "https://images.unsplash.com/photo-1519681393784-d120267933ba?w=400&h=600&fit=crop",
+            "https://images.unsplash.com/photo-1452587925148-ce544e77e70d?w=400&h=600&fit=crop",
+            "https://images.unsplash.com/photo-1519681393784-d120267933ba?w=400&h=600&fit=crop",
+            "https://images.unsplash.com/photo-1542596594-649edbc13630?w=400&h=600&fit=crop"
+        ];
+
+        // DOM Elements
+        const receiverInput = document.getElementById('receiverInput');
+        const categoryBtns = document.querySelectorAll('.category-btn');
+        const generateBtn = document.getElementById('generateBtn');
+        const loading = document.getElementById('loading');
+        const resultCard = document.getElementById('resultCard');
+        const resultAvatar = document.getElementById('resultAvatar');
+        const resultReceiver = document.getElementById('resultReceiver');
+        const resultText = document.getElementById('resultText');
+        const blessingImage = document.getElementById('blessingImage');
+        const copyBtn = document.getElementById('copyBtn');
+        const shareBtn = document.getElementById('shareBtn');
+        const createBlessing = document.getElementById('createBlessing');
+        const toast = document.getElementById('toast');
+
+        let currentCategory = 'family';
+
+        // Category Selection
+        categoryBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                categoryBtns.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentCategory = btn.dataset.category;
+            });
+        });
+
+        // Generate Blessing
+        generateBtn.addEventListener('click', () => {
+            const receiver = receiverInput.value.trim() || '亲爱的朋友';
+            
+            if (!receiver) {
+                showToast('请输入收件人名字');
+                return;
+            }
+
+            // Show loading
+            loading.classList.add('show');
+            resultCard.classList.remove('show');
+            generateBtn.disabled = true;
+
+            // Simulate API call
+            setTimeout(() => {
+                // Generate blessing
+                const categoryBlessings = blessings[currentCategory];
+                const randomBlessing = categoryBlessings[Math.floor(Math.random() * categoryBlessings.length)];
+                const finalBlessing = randomBlessing.replace('{receiver}', receiver);
+
+                // Update result
+                resultReceiver.textContent = receiver;
+                resultAvatar.src = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(receiver)}`;
+                resultText.textContent = finalBlessing;
+
+                // Update image
+                const randomImage = blessingImages[Math.floor(Math.random() * blessingImages.length)];
+                blessingImage.querySelector('img').src = randomImage;
+
+                // Show result
+                loading.classList.remove('show');
+                resultCard.classList.add('show');
+                generateBtn.disabled = false;
+            }, 1000);
+        });
+
+        // Copy to clipboard
+        copyBtn.addEventListener('click', () => {
+            const text = resultText.textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                showToast('已复制到剪贴板');
+            }).catch(() => {
+                showToast('复制失败，请重试');
+            });
+        });
+
+        // Share button
+        shareBtn.addEventListener('click', () => {
+            showToast('分享功能开发中...');
+        });
+
+        // Create blessing button
+        createBlessing.addEventListener('click', () => {
+            receiverInput.focus();
+            receiverInput.scrollIntoView({ behavior: 'smooth' });
+        });
+
+        // Toast function
+        function showToast(message) {
+            toast.textContent = message;
+            toast.classList.add('show');
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 2000);
+        }
+
+        // Template cards click
+        document.querySelectorAll('.template-card').forEach((card, index) => {
+            card.addEventListener('click', () => {
+                receiverInput.value = '';
+                receiverInput.focus();
+                categoryBtns.forEach(b => b.classList.remove('active'));
+                categoryBtns[index].classList.add('active');
+                currentCategory = categoryBtns[index].dataset.category;
+            });
+        });
+    </script>
+</body>
+</html>

@@ -32,6 +32,7 @@ class CodeGenerationServiceTest {
         PreviewScriptService previewScriptService = mock(PreviewScriptService.class);
         UIPrototypeService uiPrototypeService = mock(UIPrototypeService.class);
         FrontendScaffoldService frontendScaffoldService = new FrontendScaffoldService();
+        BackendGenerationFixer backendGenerationFixer = new BackendGenerationFixer();
 
         Conversation conversation = new Conversation();
         conversation.setId(1L);
@@ -60,7 +61,8 @@ class CodeGenerationServiceTest {
                 promptTaskService,
                 previewScriptService,
                 uiPrototypeService,
-                frontendScaffoldService
+                frontendScaffoldService,
+                backendGenerationFixer
         );
         ReflectionTestUtils.setField(service, "outputDir", tempDir.toString());
 

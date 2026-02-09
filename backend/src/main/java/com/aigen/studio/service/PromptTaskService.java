@@ -182,6 +182,9 @@ public class PromptTaskService {
                 - 表必须使用 CREATE TABLE IF NOT EXISTS
                 - 尽量使用通用数据类型（INT/BIGINT/VARCHAR/TEXT/DECIMAL/DATE/DATETIME）
             13. 如果后端使用 H2 作为默认开发数据库，application.yml 中请设置 spring.sql.init.mode=embedded。
+            14. 禁止使用实体命名 Character，避免与 java.lang.Character 冲突；建议使用 PersonalityCharacter/HistoricalCharacter。
+            15. 不要使用实体包通配符导入（import ...entity.*），请显式 import 需要的实体。
+            16. selectCount 返回 Long，请使用 Math.toIntExact(...) 或 .intValue()。
 
             输出目录：%s
 

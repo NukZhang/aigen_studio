@@ -23,6 +23,11 @@ public enum ConversationStage {
      * UI 生成阶段（状态栏第3步：生成UI）
      */
     UI_GENERATING,
+
+    /**
+     * UI 已生成，等待确认
+     */
+    UI_READY,
     
     /**
      * UI 已确认（内部状态，显示在"生成UI"步骤）

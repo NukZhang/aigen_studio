@@ -6,12 +6,12 @@ import org.springframework.stereotype.Service;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 @Slf4j
 @Service
 public class FrontendScaffoldService {
+
+    private final HtmlToVueTransformer htmlToVueTransformer = new HtmlToVueTransformer(new JsAstRewriter());
 
     public void ensureVueScaffoldAndInjectPrototype(Path frontendDir, String uiPrototypeHtml, String projectName) {
         if (frontendDir == null) {
@@ -138,22 +138,25 @@ public class FrontendScaffoldService {
     }
 
     private void writeAppVueFromPrototype(Path srcDir, String uiPrototypeHtml) throws Exception {
-        String body = extractBody(uiPrototypeHtml);
-        String style = extractStyle(uiPrototypeHtml);
-        body = stripSideEffectTags(body);
+        VueSfcParts parts = htmlToVueTransformer.transform(uiPrototypeHtml);
+        String template = parts.template();
+        String scriptSetup = parts.scriptSetup();
+        String style = parts.style();
 
-        if (body.isBlank()) {
-            body = "<div class=\"ui-prototype\"></div>";
-        } else {
-            body = "<div class=\"ui-prototype\">\n" + indent(body, 4) + "\n</div>";
+        if (template == null || template.isBlank()) {
+            template = "<div class=\"ui-prototype\"></div>";
         }
 
         StringBuilder content = new StringBuilder();
-        content.append("<template>\n  ")
-                .append(body.replace("\n", "\n  "))
+        content.append("<template>\n")
+                .append(template)
                 .append("\n</template>\n\n");
-        content.append("<script setup lang=\"ts\">\n</script>\n");
-        if (!style.isBlank()) {
+        content.append("<script setup lang=\"ts\">\n");
+        if (scriptSetup != null && !scriptSetup.isBlank()) {
+            content.append(scriptSetup).append("\n");
+        }
+        content.append("</script>\n");
+        if (style != null && !style.isBlank()) {
             content.append("\n<style>\n").append(style).append("\n</style>\n");
         }
 
@@ -177,50 +180,4 @@ public class FrontendScaffoldService {
         Files.writeString(appVue, content, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
     }
 
-    private String extractBody(String html) {
-        if (html == null) {
-            return "";
-        }
-        Pattern pattern = Pattern.compile("(?is)<body[^>]*>(.*?)</body>");
-        Matcher matcher = pattern.matcher(html);
-        if (matcher.find()) {
-            return matcher.group(1).trim();
-        }
-        String cleaned = html
-                .replaceAll("(?is)<!doctype[^>]*>", "")
-                .replaceAll("(?is)<head[^>]*>.*?</head>", "")
-                .replaceAll("(?is)<html[^>]*>", "")
-                .replaceAll("(?is)</html>", "")
-                .replaceAll("(?is)<body[^>]*>", "")
-                .replaceAll("(?is)</body>", "")
-                .trim();
-        return cleaned;
-    }
-
-    private String extractStyle(String html) {
-        if (html == null) {
-            return "";
-        }
-        Pattern pattern = Pattern.compile("(?is)<style[^>]*>(.*?)</style>");
-        Matcher matcher = pattern.matcher(html);
-        if (matcher.find()) {
-            return matcher.group(1).trim();
-        }
-        return "";
-    }
-
-    private String stripSideEffectTags(String html) {
-        if (html == null || html.isBlank()) {
-            return "";
-        }
-        return html
-                .replaceAll("(?is)<script[^>]*>.*?</script>", "")
-                .replaceAll("(?is)<style[^>]*>.*?</style>", "")
-                .trim();
-    }
-
-    private String indent(String text, int spaces) {
-        String prefix = " ".repeat(spaces);
-        return text.replace("\n", "\n" + prefix);
-    }
 }

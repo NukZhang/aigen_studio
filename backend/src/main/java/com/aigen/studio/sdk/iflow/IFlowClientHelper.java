@@ -206,6 +206,7 @@ public class IFlowClientHelper implements ICodingService {
                             handler.onTaskFinishMessage((TaskFinishMessage) message);
                         }
                     })
+                    .takeUntil(message -> message instanceof TaskFinishMessage)
                     .doOnError(handler::onError)
                     .doOnComplete(handler::onComplete)
                     .timeout(Duration.ofMillis(timeout))
