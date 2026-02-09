@@ -2,6 +2,7 @@ package com.aigen.studio.service;
 
 import com.aigen.studio.dto.ConfirmUnderstandingRequest;
 import com.aigen.studio.dto.ConversationDTO;
+import com.aigen.studio.dto.MessageDTO;
 import com.aigen.studio.entity.Conversation;
 import com.aigen.studio.entity.ConversationStage;
 import com.aigen.studio.entity.Message;
@@ -176,6 +177,194 @@ class ConversationReadyStageTest {
 
         Conversation updated = waitForStage(conversationId, ConversationStage.READY_TO_START, 5);
         assertTrue(updated.getGeneratedCodePath().startsWith(outputDir.toString()));
+    }
+
+    @Test
+    void uiReadyStageSupportsRegenerateUiMessageWhenNoTaskRunning() throws Exception {
+        Conversation conversation = new Conversation();
+        conversation.setProjectName("Test");
+        conversation.setUserRequirement("Generate a demo app");
+        conversation.setAiUnderstanding("Understood requirements");
+        conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+        conversation.setStage(ConversationStage.UI_READY);
+        conversation.setUiPrototypeContent("<html></html>");
+        conversation.setUiConfirmed(false);
+        conversation = conversationRepository.save(conversation);
+
+        MessageDTO message = new MessageDTO();
+        message.setContent("请重新生成 UI");
+
+        try {
+            MessageDTO response = conversationService.sendMessageToNewConversation(conversation.getId(), message);
+            assertNotNull(response);
+            assertTrue(response.getContent().contains("重新生成 UI 原型"));
+            assertTrue(uiGenerationStarted.await(2, TimeUnit.SECONDS), "UI regeneration should be triggered");
+
+            Conversation updated = conversationRepository.findById(conversation.getId()).orElseThrow();
+            assertTrue(updated.getStage() == ConversationStage.UI_GENERATING
+                    || updated.getStage() == ConversationStage.UI_READY);
+        } finally {
+            allowUiComplete.countDown();
+        }
+    }
+
+    @Test
+    void uiReadyStageRegenerateMessageReturnsBeforeUiGenerationCompletes() throws Exception {
+        Conversation conversation = new Conversation();
+        conversation.setProjectName("Test");
+        conversation.setUserRequirement("Generate a demo app");
+        conversation.setAiUnderstanding("Understood requirements");
+        conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+        conversation.setStage(ConversationStage.UI_READY);
+        conversation.setUiPrototypeContent("<html></html>");
+        conversation.setUiConfirmed(false);
+        conversation = conversationRepository.save(conversation);
+        final Long conversationId = conversation.getId();
+
+        MessageDTO message = new MessageDTO();
+        message.setContent("重新生成UI");
+
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        Future<MessageDTO> future = executor.submit(() ->
+                conversationService.sendMessageToNewConversation(conversationId, message)
+        );
+
+        try {
+            MessageDTO response = future.get(500, TimeUnit.MILLISECONDS);
+            assertNotNull(response);
+            assertTrue(response.getContent().contains("重新生成 UI 原型"));
+            assertTrue(uiGenerationStarted.await(2, TimeUnit.SECONDS), "UI regeneration should be triggered");
+        } finally {
+            allowUiComplete.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void uiGeneratingStageAllowsRegenerateUiWhenNoRealTaskRunning() throws Exception {
+        Conversation conversation = new Conversation();
+        conversation.setProjectName("Test");
+        conversation.setUserRequirement("Generate a demo app");
+        conversation.setAiUnderstanding("Understood requirements");
+        conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+        conversation.setStage(ConversationStage.UI_GENERATING);
+        conversation.setUiPrototypeContent(null);
+        conversation.setUiConfirmed(false);
+        conversation = conversationRepository.save(conversation);
+
+        MessageDTO message = new MessageDTO();
+        message.setContent("重新生成UI");
+
+        try {
+            MessageDTO response = conversationService.sendMessageToNewConversation(conversation.getId(), message);
+            assertNotNull(response);
+            assertTrue(response.getContent().contains("重新生成 UI 原型"));
+            assertTrue(uiGenerationStarted.await(2, TimeUnit.SECONDS), "UI regeneration should be triggered");
+        } finally {
+            allowUiComplete.countDown();
+        }
+    }
+
+    @Test
+    void readyToStartStageSupportsRequirementRefinementMessage() {
+        Conversation conversation = new Conversation();
+        conversation.setProjectName("Test");
+        conversation.setUserRequirement("Generate a demo app");
+        conversation.setAiUnderstanding("Initial understanding");
+        conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+        conversation.setStage(ConversationStage.READY_TO_START);
+        conversation = conversationRepository.save(conversation);
+
+        MessageDTO message = new MessageDTO();
+        message.setContent("需求修改：增加一个报表分析页面");
+
+        MessageDTO response = conversationService.sendMessageToNewConversation(conversation.getId(), message);
+        assertNotNull(response);
+        assertTrue(response.getContent().contains("请问这个理解是否正确"));
+
+        Conversation updated = conversationRepository.findById(conversation.getId()).orElseThrow();
+        assertEquals(ConversationStage.UNDERSTANDING_CONFIRMED, updated.getStage());
+        assertTrue(updated.getUserRequirement().contains("报表分析页面"));
+        assertEquals("understood", updated.getAiUnderstanding());
+    }
+
+    @Test
+    void codeGeneratingStageAllowsRegenerateUiMessageWhenNoRealTaskRunning() throws Exception {
+        Conversation conversation = new Conversation();
+        conversation.setProjectName("Test");
+        conversation.setUserRequirement("Generate a demo app");
+        conversation.setAiUnderstanding("Understood requirements");
+        conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+        conversation.setStage(ConversationStage.CODE_GENERATING);
+        conversation = conversationRepository.save(conversation);
+
+        MessageDTO message = new MessageDTO();
+        message.setContent("重新生成 UI");
+
+        try {
+            MessageDTO response = conversationService.sendMessageToNewConversation(conversation.getId(), message);
+            assertNotNull(response);
+            assertTrue(response.getContent().contains("重新生成 UI 原型"));
+            assertTrue(uiGenerationStarted.await(2, TimeUnit.SECONDS), "UI regeneration should be triggered");
+        } finally {
+            allowUiComplete.countDown();
+        }
+    }
+
+    @Test
+    void codeGeneratingStageRejectsRegenerateUiMessageWhenTaskIsActuallyRunning() throws Exception {
+        Conversation conversation = new Conversation();
+        conversation.setProjectName("Test");
+        conversation.setUserRequirement("Generate a demo app");
+        conversation.setAiUnderstanding("Understood requirements");
+        conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+        conversation.setStage(ConversationStage.UI_GENERATING);
+        conversation.setUiPrototypeContent("<html></html>");
+        conversation.setUiConfirmed(false);
+        conversation = conversationRepository.save(conversation);
+
+        conversationService.confirmUIPrototype(conversation.getId());
+        assertTrue(codeGenerationStarted.await(2, TimeUnit.SECONDS), "Code generation should be running");
+
+        MessageDTO message = new MessageDTO();
+        message.setContent("重新生成 UI");
+
+        MessageDTO response = conversationService.sendMessageToNewConversation(conversation.getId(), message);
+        assertNotNull(response);
+        assertTrue(response.getContent().contains("任务正在运行"));
+
+        Conversation updated = conversationRepository.findById(conversation.getId()).orElseThrow();
+        assertEquals(ConversationStage.CODE_GENERATING, updated.getStage());
+
+        allowCodeComplete.countDown();
+    }
+
+    @Test
+    void codeGeneratingStageAllowsRegenerateUiMessageWhenConversationIsNotActive() throws Exception {
+        Conversation conversation = new Conversation();
+        conversation.setProjectName("Test");
+        conversation.setUserRequirement("Generate a demo app");
+        conversation.setAiUnderstanding("Understood requirements");
+        conversation.setStatus(Conversation.ConversationStatus.FAILED);
+        conversation.setStage(ConversationStage.CODE_GENERATING);
+        conversation = conversationRepository.save(conversation);
+
+        MessageDTO message = new MessageDTO();
+        message.setContent("重新生成 UI");
+
+        try {
+            MessageDTO response = conversationService.sendMessageToNewConversation(conversation.getId(), message);
+            assertNotNull(response);
+            assertTrue(response.getContent().contains("重新生成 UI 原型"));
+            assertTrue(uiGenerationStarted.await(2, TimeUnit.SECONDS), "UI regeneration should be triggered");
+
+            Conversation updated = conversationRepository.findById(conversation.getId()).orElseThrow();
+            assertTrue(updated.getStage() == ConversationStage.UI_GENERATING
+                    || updated.getStage() == ConversationStage.UI_READY);
+            assertEquals(Conversation.ConversationStatus.ACTIVE, updated.getStatus());
+        } finally {
+            allowUiComplete.countDown();
+        }
     }
 
     private Conversation waitForStage(Long conversationId, ConversationStage stage, int timeoutSeconds)

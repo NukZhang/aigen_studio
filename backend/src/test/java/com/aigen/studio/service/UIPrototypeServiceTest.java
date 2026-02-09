@@ -17,9 +17,12 @@ import org.springframework.test.context.DynamicPropertySource;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -41,6 +44,9 @@ class UIPrototypeServiceTest {
 
     private static final AtomicBoolean workDirExistsAtCall = new AtomicBoolean(false);
     private static final AtomicReference<Path> receivedWorkDir = new AtomicReference<>();
+    private static final AtomicReference<String> receivedPrompt = new AtomicReference<>();
+    private static final List<String> receivedPrompts = new CopyOnWriteArrayList<>();
+    private static final AtomicReference<RuntimeException> executeException = new AtomicReference<>();
     private static CountDownLatch taskInvoked;
     private static final AtomicReference<Consumer<ICodingService.MessageHandler>> handlerHook = new AtomicReference<>();
 
@@ -54,6 +60,9 @@ class UIPrototypeServiceTest {
     void resetTracking() {
         workDirExistsAtCall.set(false);
         receivedWorkDir.set(null);
+        receivedPrompt.set(null);
+        receivedPrompts.clear();
+        executeException.set(null);
         taskInvoked = new CountDownLatch(1);
         handlerHook.set(null);
     }
@@ -66,9 +75,15 @@ class UIPrototypeServiceTest {
             return new ICodingService() {
                 @Override
                 public void executeTask(String prompt, Path workDir, MessageHandler handler) {
+                    receivedPrompt.set(prompt);
+                    receivedPrompts.add(prompt);
                     receivedWorkDir.set(workDir);
                     workDirExistsAtCall.set(Files.isDirectory(workDir));
                     taskInvoked.countDown();
+                    RuntimeException toThrow = executeException.get();
+                    if (toThrow != null) {
+                        throw toThrow;
+                    }
                     Consumer<ICodingService.MessageHandler> hook = handlerHook.get();
                     if (hook != null) {
                         hook.accept(handler);
@@ -128,8 +143,7 @@ class UIPrototypeServiceTest {
 
         assertTrue(awaitLatch(completed));
 
-        Conversation updated = conversationRepository.findById(conversation.getId())
-                .orElseThrow();
+        Conversation updated = waitForStage(conversation.getId(), ConversationStage.UI_READY, 2);
         assertEquals("UI_READY", updated.getStage().name());
         assertNotNull(updated.getUiPrototypePath());
         Path expectedPath = outputDir
@@ -172,10 +186,247 @@ class UIPrototypeServiceTest {
 
         assertTrue(awaitLatch(completed));
 
-        Conversation updated = conversationRepository.findById(conversationId)
-                .orElseThrow();
+        Conversation updated = waitForStage(conversationId, ConversationStage.UI_READY, 2);
         assertEquals("UI_READY", updated.getStage().name());
-        assertEquals(html, updated.getUiPrototypeContent());
+        assertNotNull(updated.getUiPrototypeContent());
+        assertTrue(updated.getUiPrototypeContent().contains(html));
+        assertTrue(updated.getUiPrototypeContent().contains("pencil-ui-design"));
+    }
+
+    @Test
+    void generateUIPrototypeRewritesEmptyExistingHtmlFileOnSuccess() {
+        Conversation conversation = new Conversation();
+        conversation.setProjectName("Test Project");
+        conversation.setUserRequirement("Generate a UI prototype");
+        conversation.setAiUnderstanding("Understood requirements");
+        conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+        conversation.setStage(ConversationStage.UNDERSTANDING_CONFIRMED);
+        conversation = conversationRepository.save(conversation);
+
+        Path htmlFile = outputDir
+                .resolve("conversation-" + conversation.getId())
+                .resolve("ui-prototype")
+                .resolve("index.html");
+        try {
+            Files.createDirectories(htmlFile.getParent());
+            Files.writeString(htmlFile, "");
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+
+        String html = "<html><body>From Assistant</body></html>";
+        CountDownLatch completed = new CountDownLatch(1);
+        handlerHook.set(handler -> {
+            handler.onAssistantMessage(html);
+            handler.onComplete();
+            completed.countDown();
+        });
+
+        uiPrototypeService.generateUIPrototype(conversation.getId());
+
+        assertTrue(awaitLatch(completed));
+        Conversation updated = waitForStage(conversation.getId(), ConversationStage.UI_READY, 2);
+        assertEquals(ConversationStage.UI_READY, updated.getStage());
+        try {
+            String savedFile = Files.readString(htmlFile);
+            assertTrue(savedFile.contains("From Assistant"));
+            assertTrue(savedFile.contains("<html>"));
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @Test
+    void generateUIPrototypePromptRendersBackendTemplateVariables() {
+        Conversation conversation = new Conversation();
+        conversation.setProjectName("Template Driven Project");
+        conversation.setUserRequirement("Template requirement text");
+        conversation.setAiUnderstanding("Template understanding text");
+        conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+        conversation.setStage(ConversationStage.UNDERSTANDING_CONFIRMED);
+        conversation = conversationRepository.save(conversation);
+
+        uiPrototypeService.generateUIPrototype(conversation.getId());
+
+        assertTrue(awaitTaskInvocation());
+        String prompt = receivedPrompt.get();
+        assertNotNull(prompt);
+        assertTrue(prompt.contains("模板模式：PRIMARY"),
+                "Primary prompt should be rendered from backend prompt template");
+        assertTrue(prompt.contains("Template Driven Project"));
+        assertTrue(prompt.contains("Template requirement text"));
+        assertTrue(prompt.contains("Template understanding text"));
+        assertTrue(prompt.contains("images.unsplash.com"),
+                "Rendered template prompt should keep Unsplash requirements");
+        assertTrue(!prompt.contains("{{PROJECT_NAME}}"),
+                "Template variable placeholders should be rendered");
+        assertTrue(!prompt.contains("{{USER_REQUIREMENT}}"),
+                "Template variable placeholders should be rendered");
+        assertTrue(!prompt.contains("{{AI_UNDERSTANDING}}"),
+                "Template variable placeholders should be rendered");
+    }
+
+    @Test
+    void buildPromptDiagnosticsMarksPencilAndVisualRules() {
+        String prompt = """
+                pencil-ui-design
+                图片
+                背景
+                图表
+                头像
+                """;
+
+        String diagnostics = uiPrototypeService.buildPromptDiagnostics(prompt);
+
+        assertTrue(diagnostics.contains("pencil=true"));
+        assertTrue(diagnostics.contains("image=true"));
+        assertTrue(diagnostics.contains("background=true"));
+        assertTrue(diagnostics.contains("chart=true"));
+        assertTrue(diagnostics.contains("avatar=true"));
+    }
+
+    @Test
+    void generateUIPrototypeMarksFailedWhenExecuteTaskThrows() {
+        Conversation conversation = new Conversation();
+        conversation.setProjectName("Test Project");
+        conversation.setUserRequirement("Generate a UI prototype");
+        conversation.setAiUnderstanding("Understood requirements");
+        conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+        conversation.setStage(ConversationStage.UNDERSTANDING_CONFIRMED);
+        conversation = conversationRepository.save(conversation);
+
+        executeException.set(new RuntimeException("生成数据错误"));
+
+        uiPrototypeService.generateUIPrototype(conversation.getId());
+
+        assertTrue(awaitTaskInvocation());
+        Conversation updated = waitForStage(conversation.getId(), ConversationStage.FAILED, 2);
+        assertEquals(ConversationStage.FAILED, updated.getStage());
+        assertTrue(updated.getErrorMessage() != null && updated.getErrorMessage().contains("生成数据错误"));
+    }
+
+    @Test
+    void generateUIPrototypeMarksFailedWhenNoValidHtmlProduced() {
+        Conversation conversation = new Conversation();
+        conversation.setProjectName("Test Project");
+        conversation.setUserRequirement("Generate a UI prototype");
+        conversation.setAiUnderstanding("Understood requirements");
+        conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+        conversation.setStage(ConversationStage.UNDERSTANDING_CONFIRMED);
+        conversation = conversationRepository.save(conversation);
+
+        CountDownLatch completed = new CountDownLatch(1);
+        handlerHook.set(handler -> {
+            handler.onComplete();
+            completed.countDown();
+        });
+
+        uiPrototypeService.generateUIPrototype(conversation.getId());
+
+        assertTrue(awaitLatch(completed));
+        Conversation updated = waitForStage(conversation.getId(), ConversationStage.FAILED, 2);
+        assertEquals(ConversationStage.FAILED, updated.getStage());
+        assertTrue(updated.getErrorMessage() != null && updated.getErrorMessage().contains("有效 HTML"));
+    }
+
+    @Test
+    void generateUIPrototypeRetriesAfterFirstResponseTimeoutWithoutMessages() {
+        Conversation conversation = new Conversation();
+        conversation.setProjectName("Test Project");
+        conversation.setUserRequirement("Generate a UI prototype");
+        conversation.setAiUnderstanding("Understood requirements");
+        conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+        conversation.setStage(ConversationStage.UNDERSTANDING_CONFIRMED);
+        conversation = conversationRepository.save(conversation);
+
+        AtomicInteger attemptCounter = new AtomicInteger(0);
+        handlerHook.set(handler -> {
+            int attempt = attemptCounter.incrementAndGet();
+            if (attempt == 1) {
+                handler.onError(new java.util.concurrent.TimeoutException(
+                        "Did not observe any item or terminal signal within first signal from a Publisher in 'peek'"));
+                handler.onComplete();
+                return;
+            }
+            handler.onAssistantMessage("<html><body>Retry OK</body></html>");
+            handler.onComplete();
+        });
+
+        uiPrototypeService.generateUIPrototype(conversation.getId());
+
+        Conversation updated = waitForStage(conversation.getId(), ConversationStage.UI_READY, 3);
+        assertEquals(ConversationStage.UI_READY, updated.getStage());
+        assertTrue(updated.getUiPrototypeContent() != null && updated.getUiPrototypeContent().contains("Retry OK"));
+        assertEquals(2, attemptCounter.get(), "Should retry once after first-response timeout");
+        assertEquals(2, receivedPrompts.size(), "Should invoke coding service twice");
+    }
+
+    @Test
+    void generateUIPrototypeFallsBackToLegacyPromptAfterTwoFirstResponseTimeouts() {
+        Conversation conversation = new Conversation();
+        conversation.setProjectName("Test Project");
+        conversation.setUserRequirement("Generate a UI prototype");
+        conversation.setAiUnderstanding("Understood requirements");
+        conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+        conversation.setStage(ConversationStage.UNDERSTANDING_CONFIRMED);
+        conversation = conversationRepository.save(conversation);
+
+        AtomicInteger attemptCounter = new AtomicInteger(0);
+        handlerHook.set(handler -> {
+            int attempt = attemptCounter.incrementAndGet();
+            if (attempt <= 2) {
+                handler.onError(new java.util.concurrent.TimeoutException(
+                        "Did not observe any item or terminal signal within first signal from a Publisher in 'peek'"));
+                handler.onComplete();
+                return;
+            }
+            handler.onAssistantMessage("<html><body>Legacy Fallback OK</body></html>");
+            handler.onComplete();
+        });
+
+        uiPrototypeService.generateUIPrototype(conversation.getId());
+
+        Conversation updated = waitForStage(conversation.getId(), ConversationStage.UI_READY, 4);
+        assertEquals(ConversationStage.UI_READY, updated.getStage());
+        assertTrue(updated.getUiPrototypeContent() != null && updated.getUiPrototypeContent().contains("Legacy Fallback OK"));
+        assertEquals(3, attemptCounter.get(), "Should use legacy fallback after compact retry timeout");
+        assertEquals(3, receivedPrompts.size(), "Should invoke coding service three times");
+        assertTrue(receivedPrompts.get(0).contains("模板模式：PRIMARY"),
+                "First attempt should use primary prompt section");
+        assertTrue(receivedPrompts.get(1).contains("模板模式：COMPACT"),
+                "Second attempt should use compact retry prompt section");
+        assertTrue(receivedPrompts.get(2).contains("模板模式：LEGACY"),
+                "Third attempt should use legacy fallback prompt section");
+        assertTrue(receivedPrompts.get(0).contains("images.unsplash.com"),
+                "Primary prompt should include Unsplash placeholder rule");
+        assertTrue(receivedPrompts.get(1).contains("images.unsplash.com"),
+                "Compact retry prompt should include Unsplash placeholder rule");
+        assertTrue(receivedPrompts.get(2).contains("images.unsplash.com"),
+                "Legacy fallback prompt should include Unsplash placeholder rule");
+    }
+
+    @Test
+    void generateUIPrototypeInjectsPencilAttributionWhenMissingInModelOutput() {
+        Conversation conversation = new Conversation();
+        conversation.setProjectName("Test Project");
+        conversation.setUserRequirement("Generate a UI prototype");
+        conversation.setAiUnderstanding("Understood requirements");
+        conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+        conversation.setStage(ConversationStage.UNDERSTANDING_CONFIRMED);
+        conversation = conversationRepository.save(conversation);
+
+        handlerHook.set(handler -> {
+            handler.onAssistantMessage("<html><body>No attribution</body></html>");
+            handler.onComplete();
+        });
+
+        uiPrototypeService.generateUIPrototype(conversation.getId());
+
+        Conversation updated = waitForStage(conversation.getId(), ConversationStage.UI_READY, 2);
+        assertEquals(ConversationStage.UI_READY, updated.getStage());
+        assertNotNull(updated.getUiPrototypeContent());
+        assertTrue(updated.getUiPrototypeContent().contains("pencil-ui-design"),
+                "Saved HTML should include pencil-ui-design attribution marker");
     }
 
     private boolean awaitTaskInvocation() {
@@ -194,5 +445,23 @@ class UIPrototypeServiceTest {
             Thread.currentThread().interrupt();
             return false;
         }
+    }
+
+    private Conversation waitForStage(Long conversationId, ConversationStage stage, int timeoutSeconds) {
+        long deadline = System.currentTimeMillis() + timeoutSeconds * 1000L;
+        Conversation conversation = null;
+        do {
+            conversation = conversationRepository.findById(conversationId).orElseThrow();
+            if (conversation.getStage() == stage) {
+                return conversation;
+            }
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return conversation;
+            }
+        } while (System.currentTimeMillis() < deadline);
+        return conversation;
     }
 }

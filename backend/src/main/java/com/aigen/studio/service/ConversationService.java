@@ -145,7 +145,18 @@ public class ConversationService {
         response.setTimestamp(LocalDateTime.now());
         response.setToolCalls(new ArrayList<>());
 
-        switch (conversation.getStage()) {
+        if (tryHandleCrossStageCommand(conversation, message, response)) {
+            return response;
+        }
+
+        ConversationStage stage = conversation.getStage();
+        if (stage == null) {
+            log.warn("Conversation {} stage is null, fallback to idle interaction mode", conversation.getId());
+            handleIdleStageMessage(conversation, message, response);
+            return response;
+        }
+
+        switch (stage) {
             case NEED_INPUT:
                 // 需求输入阶段，用户提交需求
                 handleNeedInput(conversation, message, response);
@@ -161,13 +172,19 @@ public class ConversationService {
                 handleUnderstandingConfirmed(conversation, message, response);
                 break;
 
+            case UI_GENERATING:
+                handleUiGenerating(conversation, message, response);
+                break;
+
             case CODE_GENERATING:
                 // 代码生成阶段，用户可以询问进度
                 handleCodeGenerating(conversation, message, response);
                 break;
 
+            case UI_READY:
+            case UI_CONFIRMED:
             case READY_TO_START:
-                response.setContent("代码生成完成，请点击“确认启动”以启动服务预览。");
+                handleIdleStageMessage(conversation, message, response);
                 break;
 
             case SERVICE_STARTING:
@@ -180,8 +197,15 @@ public class ConversationService {
                 handlePreviewing(conversation, message, response);
                 break;
 
+            case COMPLETED:
+            case FAILED:
+                handleIdleStageMessage(conversation, message, response);
+                break;
+
             default:
-                response.setContent("当前阶段不支持消息交互。");
+                log.warn("Conversation {} stage {} is unsupported, fallback to idle interaction mode",
+                        conversation.getId(), stage);
+                handleIdleStageMessage(conversation, message, response);
                 break;
         }
 
@@ -292,6 +316,15 @@ public class ConversationService {
                 "您可以在\"代码编辑\"标签页查看实时生成的代码。");
     }
 
+    private void handleUiGenerating(Conversation conversation, MessageDTO message, MessageDTO response) {
+        if (isTaskRunning(conversation)) {
+            response.setContent("UI 原型正在生成中，请稍候...\n\n" +
+                    "任务完成后您可以输入“重新生成 UI”、“重新理解需求”或“重新生成代码”。");
+            return;
+        }
+        handleIdleStageMessage(conversation, message, response);
+    }
+
     /**
      * 处理服务启动阶段
      */
@@ -306,6 +339,231 @@ public class ConversationService {
     private void handlePreviewing(Conversation conversation, MessageDTO message, MessageDTO response) {
         response.setContent("您可以在\"预览\"标签页查看应用效果。\n\n" +
                 "如果需要修改，请告诉我。");
+    }
+
+    private void handleIdleStageMessage(Conversation conversation, MessageDTO message, MessageDTO response) {
+        if (isTaskRunning(conversation)) {
+            response.setContent(buildTaskRunningMessage(conversation));
+            return;
+        }
+
+        if (looksLikeRequirementRefinement(message.getContent())) {
+            reUnderstandWithRequirementDelta(conversation, message.getContent(), response);
+            return;
+        }
+
+        response.setContent("当前没有运行中的任务，您可以继续在对话框操作：\n\n" +
+                "1. 输入“重新理解需求”\n" +
+                "2. 输入“重新生成 UI”\n" +
+                "3. 输入“重新生成代码”\n" +
+                "4. 直接输入需求修改内容（我会重新理解需求）");
+    }
+
+    private boolean tryHandleCrossStageCommand(Conversation conversation, MessageDTO message, MessageDTO response) {
+        String content = safeText(message.getContent());
+        if (content.isBlank()) {
+            response.setContent("请输入具体内容后再发送。");
+            return true;
+        }
+
+        if (isRegenerateUiCommand(content)) {
+            if (isTaskRunning(conversation)) {
+                response.setContent(buildTaskRunningMessage(conversation));
+                return true;
+            }
+            conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+            conversation.setErrorMessage(null);
+            conversationRepository.save(conversation);
+            uiPrototypeService.regenerateUIPrototype(conversation.getId());
+            codeGenerationService.sendProgressMessage(conversation.getId(), "收到指令，正在重新生成 UI 原型...", "system");
+            response.setContent("好的，正在重新生成 UI 原型，请稍候。");
+            return true;
+        }
+
+        if (isRegenerateCodeCommand(content)) {
+            if (isTaskRunning(conversation)) {
+                response.setContent(buildTaskRunningMessage(conversation));
+                return true;
+            }
+            conversation.setStage(ConversationStage.CODE_GENERATING);
+            conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+            conversation.setErrorMessage(null);
+            conversationRepository.save(conversation);
+            codeGenerationService.sendProgressMessage(conversation.getId(), "收到指令，正在重新生成代码...", "system");
+            codeGenerationService.generateCodeForConversationAsync(conversation.getId());
+            response.setContent("好的，正在重新生成代码，请稍候。");
+            return true;
+        }
+
+        if (isReunderstandCommand(content)) {
+            if (isTaskRunning(conversation)) {
+                response.setContent(buildTaskRunningMessage(conversation));
+                return true;
+            }
+            String requirementDelta = extractCommandPayload(content);
+            if (!requirementDelta.isBlank()) {
+                reUnderstandWithRequirementDelta(conversation, requirementDelta, response);
+            } else {
+                reUnderstandCurrentRequirement(conversation, response);
+            }
+            return true;
+        }
+
+        if (looksLikeRequirementRefinement(content)) {
+            if (isTaskRunning(conversation)) {
+                response.setContent(buildTaskRunningMessage(conversation));
+                return true;
+            }
+            reUnderstandWithRequirementDelta(conversation, content, response);
+            return true;
+        }
+
+        return false;
+    }
+
+    private void reUnderstandCurrentRequirement(Conversation conversation, MessageDTO response) {
+        String currentRequirement = safeText(conversation.getUserRequirement());
+        if (currentRequirement.isBlank()) {
+            response.setContent("当前还没有可理解的需求内容，请先描述需求。");
+            return;
+        }
+        reUnderstandRequirement(conversation, currentRequirement, response);
+    }
+
+    private void reUnderstandWithRequirementDelta(Conversation conversation, String requirementDelta, MessageDTO response) {
+        String delta = safeText(requirementDelta);
+        String updatedRequirement = safeText(conversation.getUserRequirement());
+        if (!delta.isBlank()) {
+            updatedRequirement = updatedRequirement.isBlank()
+                    ? delta
+                    : updatedRequirement + "\n" + delta;
+        }
+        if (updatedRequirement.isBlank()) {
+            response.setContent("当前还没有可理解的需求内容，请先描述需求。");
+            return;
+        }
+
+        conversation.setUserRequirement(updatedRequirement);
+        reUnderstandRequirement(conversation, updatedRequirement, response);
+    }
+
+    private void reUnderstandRequirement(Conversation conversation, String requirement, MessageDTO response) {
+        try {
+            String aiUnderstanding = promptTaskService.understandRequirement(requirement);
+            conversation.setAiUnderstanding(aiUnderstanding);
+            conversation.setStage(ConversationStage.UNDERSTANDING_CONFIRMED);
+            conversation.setUnderstandingConfirmed(false);
+            conversation.setUiConfirmed(false);
+            conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+            conversation.setErrorMessage(null);
+            conversationRepository.save(conversation);
+
+            response.setContent("我已根据最新需求重新理解：\n\n" +
+                    aiUnderstanding + "\n\n" +
+                    "请问这个理解是否正确？如果需要修改，请继续告诉我。");
+        } catch (Exception e) {
+            log.error("Failed to re-understand requirement in cross-stage command", e);
+            conversation.setErrorMessage("重新理解需求失败: " + e.getMessage());
+            conversationRepository.save(conversation);
+            response.setContent("抱歉，重新理解需求时出现错误：" + e.getMessage() + "\n\n请稍后重试。");
+        }
+    }
+
+    private boolean isTaskRunning(Conversation conversation) {
+        if (conversation.getStatus() != Conversation.ConversationStatus.ACTIVE) {
+            return false;
+        }
+
+        ConversationStage stage = conversation.getStage();
+        if (stage == null) {
+            return false;
+        }
+
+        if (stage == ConversationStage.CODE_GENERATING) {
+            return codeGenerationService.isCodeGenerationInProgress(conversation.getId());
+        }
+        if (stage == ConversationStage.SERVICE_STARTING) {
+            return true;
+        }
+        if (stage == ConversationStage.UI_GENERATING) {
+            return safeText(conversation.getUiPrototypeContent()).isBlank()
+                    && uiPrototypeService.isUiGenerationInProgress(conversation.getId());
+        }
+        return false;
+    }
+
+    private String buildTaskRunningMessage(Conversation conversation) {
+        return switch (conversation.getStage()) {
+            case UI_GENERATING -> "当前 UI 原型正在生成中，请等待当前任务完成后再操作。";
+            case CODE_GENERATING -> "当前代码任务正在运行，请等待完成后再操作。";
+            case SERVICE_STARTING -> "当前服务正在启动，请等待完成后再操作。";
+            default -> "当前任务正在运行，请稍候再试。";
+        };
+    }
+
+    private boolean isRegenerateUiCommand(String content) {
+        String normalized = normalize(content);
+        return normalized.contains("重新生成ui")
+                || normalized.contains("重生成ui")
+                || normalized.contains("再生成ui")
+                || normalized.contains("重新生成原型")
+                || normalized.contains("重做ui")
+                || normalized.contains("重新生成界面");
+    }
+
+    private boolean isRegenerateCodeCommand(String content) {
+        String normalized = normalize(content);
+        return normalized.contains("重新生成代码")
+                || normalized.contains("重生成代码")
+                || normalized.contains("再生成代码")
+                || normalized.contains("重做代码")
+                || normalized.contains("重新生成前端")
+                || normalized.contains("重新生成后端");
+    }
+
+    private boolean isReunderstandCommand(String content) {
+        String normalized = normalize(content);
+        return normalized.contains("重新理解需求")
+                || normalized.contains("重新理解")
+                || normalized.contains("重理解需求")
+                || normalized.contains("再理解需求")
+                || normalized.contains("重新分析需求");
+    }
+
+    private boolean looksLikeRequirementRefinement(String content) {
+        String normalized = normalize(content);
+        return normalized.contains("需求修改")
+                || normalized.contains("修改需求")
+                || normalized.contains("需求调整")
+                || normalized.contains("需求变更")
+                || normalized.contains("补充需求")
+                || normalized.contains("新增需求")
+                || normalized.contains("需求补充")
+                || normalized.contains("改成")
+                || normalized.contains("改为")
+                || normalized.contains("增加")
+                || normalized.contains("新增")
+                || normalized.contains("去掉")
+                || normalized.contains("删除");
+    }
+
+    private String extractCommandPayload(String content) {
+        int separatorIndex = content.indexOf('：');
+        if (separatorIndex < 0) {
+            separatorIndex = content.indexOf(':');
+        }
+        if (separatorIndex < 0 || separatorIndex >= content.length() - 1) {
+            return "";
+        }
+        return safeText(content.substring(separatorIndex + 1));
+    }
+
+    private String normalize(String text) {
+        return safeText(text).toLowerCase().replaceAll("\\s+", "");
+    }
+
+    private String safeText(String text) {
+        return text == null ? "" : text.trim();
     }
 
     /**

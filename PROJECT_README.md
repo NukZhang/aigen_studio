@@ -567,7 +567,7 @@ iflow:
   sdk:
     endpoint: https://platform.iflow.cn
     api-key: ${IFLOW_API_KEY:sk-53b6922f314b9738c8083aabb2f7ceda}
-    timeout: 300000  # 5 minutes
+    timeout: 60000  # 1 minute
     auto-start-process: true
     file-access: true
     file-read-only: false

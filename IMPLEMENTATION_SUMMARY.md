@@ -332,7 +332,7 @@ iflow:
   sdk:
     endpoint: https://platform.iflow.cn
     api-key: ${IFLOW_API_KEY}
-    timeout: 300000
+    timeout: 60000
     auto-start-process: true
     file-access: true
     output-dir: ${IFLOW_OUTPUT_DIR:../../generated-code}

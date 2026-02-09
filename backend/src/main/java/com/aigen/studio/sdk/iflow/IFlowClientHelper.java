@@ -11,12 +11,17 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
@@ -30,11 +35,23 @@ import java.util.function.Consumer;
 @Slf4j
 public class IFlowClientHelper implements ICodingService {
 
+    private static final long DEFAULT_FIRST_RESPONSE_TIMEOUT_BUFFER_MILLIS = 60000L;
+    private static final Semaphore IFLOW_EXECUTION_SEMAPHORE = new Semaphore(1, true);
+
     @Value("${iflow.sdk.api-key}")
     private String iflowApiKey;
 
-    @Value("${iflow.sdk.timeout:300000}")
+    @Value("${iflow.sdk.timeout:60000}")
     private long timeoutMillis;
+
+    @Value("${iflow.sdk.first-response-timeout-buffer-ms:60000}")
+    private long firstResponseTimeoutBufferMillis = DEFAULT_FIRST_RESPONSE_TIMEOUT_BUFFER_MILLIS;
+
+    @Value("${iflow.sdk.skill-inactivity-timeout-ms:180000}")
+    private long skillInactivityTimeoutMillis = 180000L;
+
+    @Value("${iflow.sdk.tool-inactivity-timeout-ms:180000}")
+    private long toolInactivityTimeoutMillis = 180000L;
 
     /**
      * iFlow 消息处理器接口
@@ -186,7 +203,13 @@ public class IFlowClientHelper implements ICodingService {
             IFlowMessageHandler handler,
             long timeout
     ) {
+        boolean slotAcquired = false;
         try {
+            log.info("Waiting for iFlow execution slot...");
+            IFLOW_EXECUTION_SEMAPHORE.acquire();
+            slotAcquired = true;
+            log.info("Acquired iFlow execution slot");
+
             log.info("Connecting to iFlow...");
             client.connect().block();
 
@@ -194,34 +217,150 @@ public class IFlowClientHelper implements ICodingService {
             client.sendMessage(taskPrompt).block();
 
             log.info("Receiving messages from iFlow...");
+            long taskStartAt = System.currentTimeMillis();
+            long firstResponseTimeout = resolveFirstResponseTimeout(timeout);
+            int promptLength = taskPrompt == null ? 0 : taskPrompt.length();
+            int promptHash = taskPrompt == null ? 0 : taskPrompt.hashCode();
+            boolean mentionsPencilUiDesign = taskPrompt != null && taskPrompt.contains("pencil-ui-design");
+            AtomicInteger rawMessages = new AtomicInteger();
+            AtomicInteger taskMessages = new AtomicInteger();
+            AtomicInteger nonTaskMessages = new AtomicInteger();
+            AtomicInteger assistantMessages = new AtomicInteger();
+            AtomicInteger toolCallMessages = new AtomicInteger();
+            AtomicInteger toolResultMessages = new AtomicInteger();
+            AtomicInteger taskFinishMessages = new AtomicInteger();
+            AtomicLong firstTaskMessageAt = new AtomicLong(-1L);
+            AtomicLong lastTaskMessageAt = new AtomicLong(-1L);
+            AtomicReference<String> firstTaskMessageType = new AtomicReference<>(null);
+            AtomicReference<String> lastTaskMessageType = new AtomicReference<>(null);
+            AtomicBoolean toolActivityDetected = new AtomicBoolean(false);
+            AtomicBoolean skillInvocationDetected = new AtomicBoolean(false);
+
+            log.info(
+                    "iFlow task metadata: promptLength={}, promptHash={}, mentionsPencilUiDesign={}, firstResponseTimeoutMs={}, inactivityTimeoutMs={}, toolInactivityTimeoutMs={}, skillInactivityTimeoutMs={}",
+                    promptLength, promptHash, mentionsPencilUiDesign, firstResponseTimeout, timeout, toolInactivityTimeoutMillis, skillInactivityTimeoutMillis
+            );
+
             client.receiveMessages()
                     .doOnNext(message -> {
+                        rawMessages.incrementAndGet();
+
+                        if (!isTaskMessage(message)) {
+                            nonTaskMessages.incrementAndGet();
+                            return;
+                        }
+
+                        taskMessages.incrementAndGet();
+                        String messageType = message.getClass().getSimpleName();
+                        long now = System.currentTimeMillis();
+                        if (firstTaskMessageAt.compareAndSet(-1L, now)) {
+                            firstTaskMessageType.compareAndSet(null, messageType);
+                        }
+                        lastTaskMessageAt.set(now);
+                        lastTaskMessageType.set(messageType);
+
                         if (message instanceof AssistantMessage) {
+                            assistantMessages.incrementAndGet();
                             handler.onAssistantMessage((AssistantMessage) message);
                         } else if (message instanceof ToolCallMessage) {
-                            handler.onToolCallMessage((ToolCallMessage) message);
+                            toolCallMessages.incrementAndGet();
+                            toolActivityDetected.set(true);
+                            ToolCallMessage toolCallMessage = (ToolCallMessage) message;
+                            if (isSkillLaunchToolCall(toolCallMessage)) {
+                                skillInvocationDetected.set(true);
+                            }
+                            handler.onToolCallMessage(toolCallMessage);
                         } else if (message instanceof ToolResultMessage) {
+                            toolResultMessages.incrementAndGet();
+                            toolActivityDetected.set(true);
                             handler.onToolResultMessage((ToolResultMessage) message);
                         } else if (message instanceof TaskFinishMessage) {
+                            taskFinishMessages.incrementAndGet();
                             handler.onTaskFinishMessage((TaskFinishMessage) message);
                         }
                     })
+                    .filter(this::isTaskMessage)
                     .takeUntil(message -> message instanceof TaskFinishMessage)
                     .doOnError(handler::onError)
                     .doOnComplete(handler::onComplete)
-                    .timeout(Duration.ofMillis(timeout))
+                    .timeout(
+                            Mono.delay(Duration.ofMillis(firstResponseTimeout)),
+                            ignored -> Mono.delay(Duration.ofMillis(resolveInactivityTimeout(timeout, toolActivityDetected.get(), skillInvocationDetected.get())))
+                    )
                     .onErrorResume(java.util.concurrent.TimeoutException.class, e -> {
-                        log.warn("iFlow task timed out after {} ms", timeout);
-                        handler.onError(e);
+                        long now = System.currentTimeMillis();
+                        String phase = describeTimeoutPhase(taskMessages.get(), firstTaskMessageAt.get(), lastTaskMessageAt.get());
+                        long elapsed = now - taskStartAt;
+                        long firstTaskMessageDelay = firstTaskMessageAt.get() > 0 ? firstTaskMessageAt.get() - taskStartAt : -1L;
+                        log.warn(
+                                "iFlow task timed out: phase={}, elapsedMs={}, firstTaskMessageDelayMs={}, taskMessages={}, rawMessages={}, nonTaskMessages={}, assistantMessages={}, toolCallMessages={}, toolResultMessages={}, taskFinishMessages={}, firstTaskMessageType={}, lastTaskMessageType={}, toolActivityDetected={}, skillInvocationDetected={}, promptLength={}, promptHash={}, mentionsPencilUiDesign={}",
+                                phase,
+                                elapsed,
+                                firstTaskMessageDelay,
+                                taskMessages.get(),
+                                rawMessages.get(),
+                                nonTaskMessages.get(),
+                                assistantMessages.get(),
+                                toolCallMessages.get(),
+                                toolResultMessages.get(),
+                                taskFinishMessages.get(),
+                                firstTaskMessageType.get(),
+                                lastTaskMessageType.get(),
+                                toolActivityDetected.get(),
+                                skillInvocationDetected.get(),
+                                promptLength,
+                                promptHash,
+                                mentionsPencilUiDesign
+                        );
+                        handler.onError(new java.util.concurrent.TimeoutException(
+                                "iFlow stream timeout phase=" + phase
+                                        + ", elapsedMs=" + elapsed
+                                        + ", firstTaskMessageDelayMs=" + firstTaskMessageDelay
+                                        + ", taskMessages=" + taskMessages.get()
+                                        + ", rawMessages=" + rawMessages.get()
+                        ));
                         handler.onComplete();
                         return Flux.empty();
                     })
                     .blockLast(); // 等待流完成
 
+            long finishedAt = System.currentTimeMillis();
+            long totalElapsed = finishedAt - taskStartAt;
+            long firstTaskMessageDelay = firstTaskMessageAt.get() > 0 ? firstTaskMessageAt.get() - taskStartAt : -1L;
+            log.info(
+                    "iFlow stream completed: elapsedMs={}, firstTaskMessageDelayMs={}, taskMessages={}, rawMessages={}, nonTaskMessages={}, assistantMessages={}, toolCallMessages={}, toolResultMessages={}, taskFinishMessages={}, firstTaskMessageType={}, lastTaskMessageType={}, toolActivityDetected={}, skillInvocationDetected={}, promptLength={}, promptHash={}, mentionsPencilUiDesign={}",
+                    totalElapsed,
+                    firstTaskMessageDelay,
+                    taskMessages.get(),
+                    rawMessages.get(),
+                    nonTaskMessages.get(),
+                    assistantMessages.get(),
+                    toolCallMessages.get(),
+                    toolResultMessages.get(),
+                    taskFinishMessages.get(),
+                    firstTaskMessageType.get(),
+                    lastTaskMessageType.get(),
+                    toolActivityDetected.get(),
+                    skillInvocationDetected.get(),
+                    promptLength,
+                    promptHash,
+                    mentionsPencilUiDesign
+            );
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.error("Interrupted while waiting for iFlow execution slot", e);
+            handler.onError(e);
+            throw new RuntimeException("iFlow task execution interrupted", e);
         } catch (Exception e) {
             log.error("iFlow client error", e);
             handler.onError(e);
             throw new RuntimeException("iFlow task execution failed", e);
+        } finally {
+            if (slotAcquired) {
+                IFLOW_EXECUTION_SEMAPHORE.release();
+                log.info("Released iFlow execution slot");
+            }
         }
     }
 
@@ -234,6 +373,50 @@ public class IFlowClientHelper implements ICodingService {
             IFlowMessageHandler handler
     ) {
         executeTask(client, taskPrompt, handler, timeoutMillis);
+    }
+
+    long resolveFirstResponseTimeout(long timeout) {
+        long buffer = Math.max(0L, firstResponseTimeoutBufferMillis);
+        if (timeout <= 0) {
+            return buffer;
+        }
+        return timeout + buffer;
+    }
+
+    String describeTimeoutPhase(int totalMessages, long firstMessageAt, long lastMessageAt) {
+        if (totalMessages <= 0 || firstMessageAt <= 0 || lastMessageAt <= 0) {
+            return "first_response_timeout";
+        }
+        return "inactivity_timeout_after_messages";
+    }
+
+    private boolean isTaskMessage(Message message) {
+        return message instanceof AssistantMessage
+                || message instanceof ToolCallMessage
+                || message instanceof ToolResultMessage
+                || message instanceof TaskFinishMessage;
+    }
+
+    private boolean isSkillLaunchToolCall(ToolCallMessage message) {
+        if (message == null || message.getLabel() == null) {
+            return false;
+        }
+        String label = message.getLabel().toLowerCase();
+        return label.contains("launch skill")
+                || label.contains("pencil-ui-design")
+                || label.contains("skill:");
+    }
+
+    private long resolveInactivityTimeout(long timeout, boolean toolActivityDetected, boolean skillInvocationDetected) {
+        long defaultTimeout = Math.max(1L, timeout);
+        if (!toolActivityDetected && !skillInvocationDetected) {
+            return defaultTimeout;
+        }
+        long toolTimeout = Math.max(defaultTimeout, Math.max(1L, toolInactivityTimeoutMillis));
+        if (!skillInvocationDetected) {
+            return toolTimeout;
+        }
+        return Math.max(toolTimeout, Math.max(1L, skillInactivityTimeoutMillis));
     }
 
     /**

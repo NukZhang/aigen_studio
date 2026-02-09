@@ -24,6 +24,7 @@ public class PreviewService {
 
     private static final String PREVIEW_BASE_PATH = "/__preview__/";
     private static final String FRONTEND_ENTRY_MISSING_MESSAGE = "Frontend entry not found: index.html";
+    private static final String ROOT_PATH_NOT_READY_MESSAGE = "Conversation generated code path is not ready";
 
     private final PreviewConfigResolver previewConfigResolver;
     private final ConversationRepository conversationRepository;
@@ -115,13 +116,20 @@ public class PreviewService {
     public PreviewStatusDTO getStatus(Long conversationId) {
         synchronized (lock) {
             Conversation conversation = loadConversation(conversationId);
-            PreviewConfig config = previewConfigResolver.resolve(resolveRoot(conversation));
             Process frontend = null;
             Process backend = null;
             if (activeSession != null && activeSession.conversationId.equals(conversationId)) {
+                PreviewConfig config = activeSession.config;
                 frontend = activeSession.frontendProcess;
                 backend = activeSession.backendProcess;
+                return buildStatus(conversationId, config, frontend, backend, null);
             }
+
+            Path rootPath = resolveRootIfReady(conversation);
+            if (rootPath == null) {
+                return buildNotReadyStatus(conversationId);
+            }
+            PreviewConfig config = previewConfigResolver.resolve(rootPath);
             return buildStatus(conversationId, config, frontend, backend, null);
         }
     }
@@ -417,10 +425,21 @@ public class PreviewService {
                 .orElseThrow(() -> new RuntimeException("Conversation not found: " + conversationId));
     }
 
+    private Path resolveRootIfReady(Conversation conversation) {
+        return resolveRoot(conversation, true);
+    }
+
     private Path resolveRoot(Conversation conversation) {
+        return resolveRoot(conversation, false);
+    }
+
+    private Path resolveRoot(Conversation conversation, boolean allowNotReady) {
         String rootPath = conversation.getGeneratedCodePath();
         if (rootPath == null || rootPath.isBlank()) {
-            throw new RuntimeException("Conversation generated code path is not ready");
+            if (allowNotReady) {
+                return null;
+            }
+            throw new RuntimeException(ROOT_PATH_NOT_READY_MESSAGE);
         }
         Path path = Paths.get(rootPath).toAbsolutePath();
         // 规范化路径，处理 macOS 上的符号链接（/var/folders -> /private/var/folders）
@@ -431,6 +450,20 @@ public class PreviewService {
             path = path.normalize();
         }
         return path;
+    }
+
+    private PreviewStatusDTO buildNotReadyStatus(Long conversationId) {
+        return new PreviewStatusDTO(
+                conversationId,
+                false,
+                false,
+                false,
+                null,
+                null,
+                null,
+                null,
+                ROOT_PATH_NOT_READY_MESSAGE
+        );
     }
 
     private void stopSession(PreviewSession session) {

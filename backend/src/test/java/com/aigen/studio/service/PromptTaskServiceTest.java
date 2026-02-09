@@ -11,6 +11,48 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class PromptTaskServiceTest {
 
     @Test
+    void buildUnderstandingPromptRendersTemplateVariables() throws Exception {
+        PromptTaskService service = new PromptTaskService(new IFlowClientHelper());
+        Method method = PromptTaskService.class.getDeclaredMethod(
+                "buildUnderstandingPrompt",
+                String.class
+        );
+        method.setAccessible(true);
+
+        String prompt = (String) method.invoke(
+                service,
+                "这是一个用于模板渲染验证的需求"
+        );
+
+        assertTrue(prompt.contains("模板模式：UNDERSTANDING"));
+        assertTrue(prompt.contains("这是一个用于模板渲染验证的需求"));
+        assertTrue(!prompt.contains("{{USER_REQUIREMENT}}"));
+    }
+
+    @Test
+    void buildCodeGenerationPromptRendersTemplateVariables() throws Exception {
+        PromptTaskService service = new PromptTaskService(new IFlowClientHelper());
+        Method method = PromptTaskService.class.getDeclaredMethod(
+                "buildCodeGenerationPrompt",
+                String.class,
+                Path.class
+        );
+        method.setAccessible(true);
+
+        String prompt = (String) method.invoke(
+                service,
+                "{\"modules\":[{\"name\":\"frontend\"}]}",
+                Path.of("/tmp/template-output")
+        );
+
+        assertTrue(prompt.contains("模板模式：CODE_GENERATION"));
+        assertTrue(prompt.contains("{\"modules\":[{\"name\":\"frontend\"}]}"));
+        assertTrue(prompt.contains("/tmp/template-output"));
+        assertTrue(!prompt.contains("{{IR_CONTENT}}"));
+        assertTrue(!prompt.contains("{{OUTPUT_PATH}}"));
+    }
+
+    @Test
     void buildCodeGenerationPromptRequiresFrontendEntrySkeleton() throws Exception {
         PromptTaskService service = new PromptTaskService(new IFlowClientHelper());
         Method method = PromptTaskService.class.getDeclaredMethod(

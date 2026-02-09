@@ -346,7 +346,7 @@ spring:
 | `SPRING_PROFILES_ACTIVE` | Spring 配置文件 | `dev` |
 | `SERVER_PORT` | 服务端口 | `8080` |
 | `IFLOW_OUTPUT_DIR` | 代码生成输出目录 | `../../generated-code` |
-| `IFLOW_SDK_TIMEOUT` | SDK 超时时间（毫秒） | `300000` |
+| `IFLOW_SDK_TIMEOUT` | SDK 超时时间（毫秒） | `60000` |
 | `GITLAB_URL` | GitLab 服务器地址 | - |
 | `GITLAB_TOKEN` | GitLab 访问令牌 | - |
 | `TUTORIAL_BASE_PATH` | 教程目录路径 | `./tutorials` |
@@ -359,7 +359,7 @@ spring:
 # iFlow 配置
 IFLOW_API_KEY=sk-53b6922f314b9738c8083aabb2f7ceda
 IFLOW_OUTPUT_DIR=/opt/aigen-studio/generated-code
-IFLOW_SDK_TIMEOUT=300000
+IFLOW_SDK_TIMEOUT=60000
 
 # GitLab 配置
 GITLAB_URL=https://git.longhu.net

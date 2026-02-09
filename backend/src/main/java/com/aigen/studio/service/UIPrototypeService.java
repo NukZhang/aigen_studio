@@ -6,14 +6,21 @@ import com.aigen.studio.repository.ConversationRepository;
 import com.aigen.studio.sdk.ICodingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.ResourceLoader;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
 
 /**
  * UI 原型生成服务
@@ -24,12 +31,25 @@ import java.nio.file.StandardOpenOption;
 @RequiredArgsConstructor
 public class UIPrototypeService {
 
+    private static final String FIRST_RESPONSE_TIMEOUT_HINT = "phase=first_response_timeout";
+    private static final String TEMPLATE_SECTION_PRIMARY = "PRIMARY";
+    private static final String TEMPLATE_SECTION_COMPACT = "COMPACT";
+    private static final String TEMPLATE_SECTION_LEGACY = "LEGACY";
+
     private final ConversationRepository conversationRepository;
     private final FileService fileService;
     private final ICodingService codingService;
+    private final ResourceLoader resourceLoader;
+    @Qualifier("taskExecutor")
+    private final Executor taskExecutor;
 
     @Value("${iflow.sdk.output-dir:../../generated-code}")
     private String outputDir;
+
+    @Value("${aigen.prompt.ui-prototype-template:classpath:prompt-templates/ui-prototype-prompt.md}")
+    private String uiPromptTemplateLocation;
+
+    private final Set<Long> runningUiGenerationConversations = ConcurrentHashMap.newKeySet();
 
     /**
      * 生成 UI 原型
@@ -37,99 +57,73 @@ public class UIPrototypeService {
     @Async
     public void generateUIPrototype(Long conversationId) {
         log.info("Generating UI prototype for conversation: {}", conversationId);
-
-        Conversation conversation = conversationRepository.findById(conversationId)
-                .orElseThrow(() -> new RuntimeException("Conversation not found: " + conversationId));
-
-        // 更新状态为 UI 生成中
-        conversation.setStage(ConversationStage.UI_GENERATING);
-        conversationRepository.save(conversation);
-
-        // 构建 UI 生成提示词
-        String prompt = buildUIPrototypePrompt(conversation);
-
-        // 调用 iFlow SDK 生成 UI
-        Path workDir = getUIPrototypeDir(conversationId);
-        final Long finalConversationId = conversationId;
+        runningUiGenerationConversations.add(conversationId);
         try {
-            Files.createDirectories(workDir);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to create UI prototype directory: " + workDir, e);
+            Conversation conversation = conversationRepository.findById(conversationId)
+                    .orElseThrow(() -> new RuntimeException("Conversation not found: " + conversationId));
+
+            // 更新状态为 UI 生成中
+            conversation.setStage(ConversationStage.UI_GENERATING);
+            conversationRepository.save(conversation);
+
+            // 构建 UI 生成提示词
+            String prompt = buildUIPrototypePrompt(conversation);
+            log.info("UI prompt diagnostics for conversation {}: {}", conversationId, buildPromptDiagnostics(prompt));
+
+            UiGenerationAttemptResult attempt = executeUiGenerationAttempt(conversationId, prompt, "primary");
+            if (shouldRetryWithCompactPrompt(attempt)) {
+                String compactPrompt = buildCompactRetryPrompt(conversation);
+                log.warn(
+                        "UI primary attempt timed out before first response for conversation {}, retrying with compatibility prompt. primaryError={}",
+                        conversationId,
+                        safeErrorMessage(attempt.error)
+                );
+                log.info("UI compact prompt diagnostics for conversation {}: {}", conversationId, buildPromptDiagnostics(compactPrompt));
+                attempt = executeUiGenerationAttempt(conversationId, compactPrompt, "compact-retry");
+
+                if (shouldRetryWithCompactPrompt(attempt)) {
+                    String legacyPrompt = buildLegacyFallbackPrompt(conversation);
+                    log.warn(
+                            "UI compatibility attempt timed out before first response for conversation {}, retrying with legacy fallback prompt. compatibilityError={}",
+                            conversationId,
+                            safeErrorMessage(attempt.error)
+                    );
+                    log.info("UI legacy prompt diagnostics for conversation {}: {}", conversationId, buildPromptDiagnostics(legacyPrompt));
+                    attempt = executeUiGenerationAttempt(conversationId, legacyPrompt, "legacy-fallback");
+                }
+            }
+
+            if (attempt.resolvedHtml != null) {
+                persistUiPrototypeSuccess(conversationId, attempt);
+                return;
+            }
+
+            log.warn(
+                    "UI prototype html extraction failed for conversation {} (assistantChunks={}, assistantChars={})",
+                    conversationId,
+                    attempt.assistantChunkCount,
+                    attempt.assistantCharCount
+            );
+            if (attempt.error != null) {
+                handleUiGenerationFailure(
+                        conversationId,
+                        "UI 原型生成失败: " + safeErrorMessage(attempt.error),
+                        attempt.error
+                );
+            } else {
+                handleUiGenerationFailure(
+                        conversationId,
+                        "UI 原型生成失败: 未生成有效 HTML 内容",
+                        null
+                );
+            }
+        } finally {
+            runningUiGenerationConversations.remove(conversationId);
         }
-        codingService.executeTask(prompt, workDir, new ICodingService.MessageHandler() {
-            private StringBuilder htmlContent = new StringBuilder();
+    }
 
-            @Override
-            public void onAssistantMessage(String text) {
-                htmlContent.append(text);
-            }
-
-            @Override
-            public void onToolCall(String toolName, String status) {
-                log.info("Tool call: {} - {}", toolName, status);
-            }
-
-            @Override
-            public void onToolResult(String content) {
-                log.info("Tool result: {}", content);
-            }
-
-            @Override
-            public void onTaskFinish(String stopReason) {
-                log.info("UI prototype generation finished: {}", stopReason);
-            }
-
-            @Override
-            public void onError(Throwable error) {
-                log.error("Error generating UI prototype", error);
-                Conversation conv = conversationRepository.findById(finalConversationId)
-                        .orElse(null);
-                if (conv != null && conv.getStage() != ConversationStage.UI_READY) {
-                    conv.setStage(ConversationStage.FAILED);
-                    conv.setErrorMessage("UI 原型生成失败: " + error.getMessage());
-                    conversationRepository.save(conv);
-                }
-            }
-
-            @Override
-            public void onComplete() {
-                // 保存生成的 HTML
-                String html = htmlContent.toString();
-                String resolvedHtml = extractHtml(html);
-                Path htmlFile = getUIPrototypeDir(finalConversationId).resolve("index.html");
-                if (resolvedHtml == null) {
-                    try {
-                        if (Files.exists(htmlFile)) {
-                            String fileContent = Files.readString(htmlFile);
-                            resolvedHtml = extractHtml(fileContent);
-                            if (resolvedHtml != null) {
-                                log.info("Loaded UI prototype HTML from file for conversation: {}", finalConversationId);
-                            }
-                        }
-                    } catch (Exception e) {
-                        log.warn("Failed to read UI prototype file for conversation: {}", finalConversationId, e);
-                    }
-                }
-
-                if (resolvedHtml != null) {
-                    if (!Files.exists(htmlFile)) {
-                        htmlFile = saveUIPrototype(finalConversationId, resolvedHtml);
-                    }
-                    Conversation conv = conversationRepository.findById(finalConversationId)
-                            .orElse(null);
-                    if (conv != null) {
-                        conv.setUiPrototypeContent(resolvedHtml);
-                        conv.setUiPrototypePath(htmlFile.toString());
-                        conv.setStage(ConversationStage.UI_READY);
-                        conv.setErrorMessage(null);
-                        conversationRepository.save(conv);
-                    }
-                    log.info("UI prototype saved successfully for conversation: {}", finalConversationId);
-                } else {
-                    log.warn("Generated content does not contain valid HTML for conversation: {}", finalConversationId);
-                }
-            }
-        });
+    public boolean isUiGenerationInProgress(Long conversationId) {
+        return conversationId != null && runningUiGenerationConversations.contains(conversationId);
     }
 
     /**
@@ -206,33 +200,226 @@ public class UIPrototypeService {
         conversation.setStage(ConversationStage.UI_GENERATING);
         conversation = conversationRepository.save(conversation);
 
-        // 重新生成
-        generateUIPrototype(conversationId);
+        // 异步重新生成，避免同类方法调用导致 @Async 失效而阻塞请求线程
+        try {
+            taskExecutor.execute(() -> generateUIPrototype(conversationId));
+        } catch (RuntimeException e) {
+            handleUiGenerationFailure(conversationId, "UI 原型生成失败: " + safeErrorMessage(e), e);
+        }
     }
 
     /**
      * 构建 UI 生成提示词
      */
     private String buildUIPrototypePrompt(Conversation conversation) {
-        StringBuilder prompt = new StringBuilder();
-        prompt.append("请根据以下需求生成一个静态 HTML UI 原型页面：\n\n");
-        prompt.append("需求描述：").append(conversation.getUserRequirement()).append("\n\n");
-        prompt.append("AI 理解：").append(conversation.getAiUnderstanding()).append("\n\n");
-        prompt.append("项目名称：").append(conversation.getProjectName()).append("\n\n");
+        return renderPromptFromTemplate(TEMPLATE_SECTION_PRIMARY, conversation);
+    }
 
-        prompt.append("要求：\n");
-        prompt.append("1. 生成一个完整的 HTML 页面（包含 DOCTYPE、html、head、body 标签）\n");
-        prompt.append("2. 使用内联 CSS 样式，确保样式自包含\n");
-        prompt.append("3. 页面应该现代化、美观、响应式设计\n");
-        prompt.append("4. 包含所有必要的交互元素（按钮、表单、导航等）\n");
-        prompt.append("5. 使用语义化 HTML 标签\n");
-        prompt.append("6. 确保页面可以直接在浏览器中打开预览\n");
-        prompt.append("7. 页面样式应该专业、现代、符合用户体验最佳实践\n");
-        prompt.append("8. 使用适合的颜色方案（建议使用深色系或明亮的主题色）\n");
-        prompt.append("9. 确保所有文本清晰可读\n");
-        prompt.append("10. 输出完整的 HTML 代码，不要有额外的解释文字\n");
+    private String buildCompactRetryPrompt(Conversation conversation) {
+        return renderPromptFromTemplate(TEMPLATE_SECTION_COMPACT, conversation);
+    }
 
-        return prompt.toString();
+    private String buildLegacyFallbackPrompt(Conversation conversation) {
+        return renderPromptFromTemplate(TEMPLATE_SECTION_LEGACY, conversation);
+    }
+
+    private String renderPromptFromTemplate(String section, Conversation conversation) {
+        String sectionTemplate = resolvePromptTemplateSection(section);
+        return sectionTemplate
+                .replace("{{PROJECT_NAME}}", safeTemplateValue(conversation.getProjectName()))
+                .replace("{{USER_REQUIREMENT}}", safeTemplateValue(conversation.getUserRequirement()))
+                .replace("{{AI_UNDERSTANDING}}", safeTemplateValue(conversation.getAiUnderstanding()));
+    }
+
+    private String resolvePromptTemplateSection(String section) {
+        String templateContent = loadPromptTemplateContent();
+        String startMarker = "<!-- TEMPLATE:" + section + " -->";
+        String endMarker = "<!-- /TEMPLATE:" + section + " -->";
+
+        int start = templateContent.indexOf(startMarker);
+        int end = templateContent.indexOf(endMarker);
+        if (start < 0 || end <= start) {
+            throw new RuntimeException("UI prompt template section not found: " + section);
+        }
+
+        String sectionContent = templateContent.substring(start + startMarker.length(), end).trim();
+        if (sectionContent.isBlank()) {
+            throw new RuntimeException("UI prompt template section is empty: " + section);
+        }
+        return sectionContent;
+    }
+
+    private String loadPromptTemplateContent() {
+        Resource templateResource = resourceLoader.getResource(uiPromptTemplateLocation);
+        if (!templateResource.exists()) {
+            throw new RuntimeException("UI prompt template does not exist: " + uiPromptTemplateLocation);
+        }
+        try (var inputStream = templateResource.getInputStream()) {
+            byte[] content = inputStream.readAllBytes();
+            String rendered = new String(content, StandardCharsets.UTF_8);
+            if (rendered.isBlank()) {
+                throw new RuntimeException("UI prompt template is empty: " + uiPromptTemplateLocation);
+            }
+            return rendered;
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to load UI prompt template: " + uiPromptTemplateLocation, e);
+        }
+    }
+
+    private String safeTemplateValue(String value) {
+        return value == null ? "" : value.trim();
+    }
+
+    String buildPromptDiagnostics(String prompt) {
+        String normalized = prompt == null ? "" : prompt;
+        return "length=" + normalized.length()
+                + ",pencil=" + containsIgnoreCase(normalized, "pencil-ui-design")
+                + ",image=" + containsIgnoreCase(normalized, "图片")
+                + ",background=" + containsIgnoreCase(normalized, "背景")
+                + ",chart=" + containsIgnoreCase(normalized, "图表")
+                + ",avatar=" + containsIgnoreCase(normalized, "头像")
+                + ",skillCommand=" + containsIgnoreCase(normalized, "superpowers-codex use-skill");
+    }
+
+    private UiGenerationAttemptResult executeUiGenerationAttempt(Long conversationId, String prompt, String attemptLabel) {
+        UiGenerationAttemptResult result = new UiGenerationAttemptResult();
+        Path workDir = getUIPrototypeDir(conversationId);
+        try {
+            Files.createDirectories(workDir);
+        } catch (Exception e) {
+            result.error = new RuntimeException("无法创建工作目录", e);
+            return result;
+        }
+
+        StringBuilder htmlContent = new StringBuilder();
+        try {
+            codingService.executeTask(prompt, workDir, new ICodingService.MessageHandler() {
+                @Override
+                public void onAssistantMessage(String text) {
+                    htmlContent.append(text);
+                    result.assistantChunkCount++;
+                    result.assistantCharCount += text == null ? 0 : text.length();
+                }
+
+                @Override
+                public void onToolCall(String toolName, String status) {
+                    log.info("UI attempt [{}] tool call: {} - {}", attemptLabel, toolName, status);
+                }
+
+                @Override
+                public void onToolResult(String content) {
+                    log.info("UI attempt [{}] tool result: {}", attemptLabel, content);
+                }
+
+                @Override
+                public void onTaskFinish(String stopReason) {
+                    log.info("UI attempt [{}] finished: {}", attemptLabel, stopReason);
+                }
+
+                @Override
+                public void onError(Throwable error) {
+                    result.error = error;
+                    result.firstResponseTimeout = isFirstResponseTimeout(error);
+                }
+
+                @Override
+                public void onComplete() {
+                    result.resolvedHtml = resolveHtmlContent(conversationId, htmlContent.toString());
+                }
+            });
+        } catch (Exception e) {
+            result.error = e;
+            result.firstResponseTimeout = isFirstResponseTimeout(e);
+        }
+        return result;
+    }
+
+    private boolean shouldRetryWithCompactPrompt(UiGenerationAttemptResult result) {
+        return result != null
+                && result.resolvedHtml == null
+                && result.firstResponseTimeout
+                && result.assistantChunkCount == 0;
+    }
+
+    private boolean isFirstResponseTimeout(Throwable error) {
+        if (error == null || error.getMessage() == null) {
+            return false;
+        }
+        String lowerCase = error.getMessage().toLowerCase();
+        return lowerCase.contains(FIRST_RESPONSE_TIMEOUT_HINT)
+                || (lowerCase.contains("first signal from a publisher")
+                && !lowerCase.contains("phase=inactivity_timeout_after_messages"));
+    }
+
+    private void persistUiPrototypeSuccess(Long conversationId, UiGenerationAttemptResult attempt) {
+        String finalizedHtml = ensurePencilAttribution(attempt.resolvedHtml);
+        Path htmlFile = getUIPrototypeDir(conversationId).resolve("index.html");
+        if (shouldRewriteHtmlFile(htmlFile)) {
+            htmlFile = saveUIPrototype(conversationId, finalizedHtml);
+        }
+
+        Conversation conv = conversationRepository.findById(conversationId).orElse(null);
+        if (conv != null) {
+            conv.setUiPrototypeContent(finalizedHtml);
+            conv.setUiPrototypePath(htmlFile.toString());
+            conv.setStage(ConversationStage.UI_READY);
+            conv.setErrorMessage(null);
+            conversationRepository.save(conv);
+        }
+        log.info(
+                "UI prototype saved successfully for conversation: {} (assistantChunks={}, assistantChars={}, htmlLength={})",
+                conversationId,
+                attempt.assistantChunkCount,
+                attempt.assistantCharCount,
+                finalizedHtml.length()
+        );
+    }
+
+    private boolean shouldRewriteHtmlFile(Path htmlFile) {
+        if (!Files.exists(htmlFile)) {
+            return true;
+        }
+        try {
+            String currentContent = Files.readString(htmlFile);
+            return currentContent == null || currentContent.isBlank() || extractHtml(currentContent) == null;
+        } catch (Exception e) {
+            log.warn("Failed to inspect existing UI html file: {}", htmlFile, e);
+            return true;
+        }
+    }
+
+    private String ensurePencilAttribution(String html) {
+        if (html == null || html.isBlank() || containsIgnoreCase(html, "pencil-ui-design")) {
+            return html;
+        }
+        return "<!-- 已调用并遵循 pencil-ui-design 规范（图片/背景/图表/头像） -->\n" + html;
+    }
+
+    private String resolveHtmlContent(Long conversationId, String assistantHtml) {
+        String resolvedHtml = extractHtml(assistantHtml);
+        if (resolvedHtml != null) {
+            return resolvedHtml;
+        }
+
+        Path htmlFile = getUIPrototypeDir(conversationId).resolve("index.html");
+        try {
+            if (Files.exists(htmlFile)) {
+                String fileContent = Files.readString(htmlFile);
+                resolvedHtml = extractHtml(fileContent);
+                if (resolvedHtml != null) {
+                    log.info("Loaded UI prototype HTML from file for conversation: {}", conversationId);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to read UI prototype file for conversation: {}", conversationId, e);
+        }
+        return resolvedHtml;
+    }
+
+    private String safeErrorMessage(Throwable error) {
+        return error == null || error.getMessage() == null || error.getMessage().isBlank()
+                ? "未知错误"
+                : error.getMessage();
     }
 
     /**
@@ -267,5 +454,38 @@ public class UIPrototypeService {
 
     private int indexOfIgnoreCase(String content, String needle) {
         return content.toLowerCase().indexOf(needle.toLowerCase());
+    }
+
+    private boolean containsIgnoreCase(String content, String needle) {
+        return indexOfIgnoreCase(content, needle) >= 0;
+    }
+
+    private void handleUiGenerationFailure(Long conversationId, String message, Throwable error) {
+        if (error != null) {
+            log.error("Error generating UI prototype for conversation: {}", conversationId, error);
+        } else {
+            log.warn("UI prototype generation failed for conversation {}: {}", conversationId, message);
+        }
+
+        Conversation conv = conversationRepository.findById(conversationId).orElse(null);
+        if (conv == null || conv.getStage() == ConversationStage.UI_READY) {
+            return;
+        }
+        if (conv.getStage() == ConversationStage.FAILED
+                && conv.getErrorMessage() != null
+                && !conv.getErrorMessage().isBlank()) {
+            return;
+        }
+        conv.setStage(ConversationStage.FAILED);
+        conv.setErrorMessage(message);
+        conversationRepository.save(conv);
+    }
+
+    private static class UiGenerationAttemptResult {
+        private String resolvedHtml;
+        private Throwable error;
+        private boolean firstResponseTimeout;
+        private int assistantChunkCount;
+        private int assistantCharCount;
     }
 }

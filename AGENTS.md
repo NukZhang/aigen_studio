@@ -370,7 +370,7 @@ iflow:
   sdk:
     endpoint: https://platform.iflow.cn
     api-key: ${IFLOW_API_KEY:sk-53b6922f314b9738c8083aabb2f7ceda}
-    timeout: 300000  # 5 分钟
+    timeout: 60000  # 1 分钟
     output-dir: ${IFLOW_OUTPUT_DIR:../../generated-code}
     permission-mode: AUTO
 ```

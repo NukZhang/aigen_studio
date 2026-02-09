@@ -137,6 +137,23 @@ class PreviewServiceTest {
     }
 
     @Test
+    void getStatusReturnsNotRunningWhenGeneratedCodePathNotReady() {
+        Conversation conversation = new Conversation();
+        conversation.setProjectName("Preview Test");
+        conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+        conversation.setStage(ConversationStage.UI_GENERATING);
+        conversation.setUnderstandingConfirmed(false);
+        conversation = conversationRepository.save(conversation);
+
+        PreviewStatusDTO status = previewService.getStatus(conversation.getId());
+
+        assertFalse(status.isRunning());
+        assertFalse(status.isFrontendRunning());
+        assertFalse(status.isBackendRunning());
+        assertTrue(status.getMessage() != null && status.getMessage().contains("not ready"));
+    }
+
+    @Test
     void startPreviewInstallsFrontendDependenciesWhenMissing(@TempDir Path tmp) throws Exception {
         Path frontendDir = Files.createDirectories(tmp.resolve("frontend"));
         Files.writeString(frontendDir.resolve("package.json"), "{}");

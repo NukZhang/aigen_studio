@@ -14,6 +14,8 @@ import org.springframework.stereotype.Service;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Service
@@ -31,60 +33,71 @@ public class CodeGenerationService {
     @Value("${iflow.sdk.output-dir:./output}")
     private String outputDir;
 
+    private final Set<Long> runningCodeGenerationConversations = ConcurrentHashMap.newKeySet();
+
     @Async
     public void generateCodeForConversationAsync(Long conversationId) {
+        runningCodeGenerationConversations.add(conversationId);
         try {
-            Conversation conversation = conversationRepository.findById(conversationId)
-                    .orElseThrow(() -> new RuntimeException("Conversation not found: " + conversationId));
+            try {
+                Conversation conversation = conversationRepository.findById(conversationId)
+                        .orElseThrow(() -> new RuntimeException("Conversation not found: " + conversationId));
 
-            log.info("Starting code generation for conversation: {}", conversationId);
+                log.info("Starting code generation for conversation: {}", conversationId);
 
-            Path outputPath = Paths.get(outputDir, "conversation-" + conversationId);
-            Files.createDirectories(outputPath);
+                Path outputPath = Paths.get(outputDir, "conversation-" + conversationId);
+                Files.createDirectories(outputPath);
 
-            conversation.setGeneratedCodePath(outputPath.toString());
-            conversationRepository.save(conversation);
-
-            sendProgressMessage(conversationId, "正在调用 iFlow SDK 生成代码，请稍候...", "system");
-
-            String uiPrototypeHtml = uiPrototypeService.getUIPrototype(conversationId);
-            String irContent = generateIRContent(conversation, uiPrototypeHtml);
-
-            promptTaskService.generateCode(irContent, outputPath, message -> {
-                log.info("Code generation log: {}", message);
-                sendProgressMessage(conversationId, message, "system");
-            });
-
-            backendGenerationFixer.fixGeneratedBackend(outputPath.resolve("backend"));
-
-            Path frontendDir = outputPath.resolve("frontend");
-            frontendScaffoldService.ensureVueScaffoldAndInjectPrototype(
-                    frontendDir,
-                    uiPrototypeHtml,
-                    conversation.getProjectName()
-            );
-
-            ensurePreviewScripts(outputPath);
-
-            conversation.setStage(ConversationStage.READY_TO_START);
-            conversation.setServiceStatus("CODE_GENERATED");
-            conversationRepository.save(conversation);
-
-            sendProgressMessage(conversationId, "代码生成完成，请确认启动服务", "system");
-
-            log.info("Code generation completed for conversation: {}", conversationId);
-        } catch (Exception e) {
-            log.error("Code generation failed for conversation: {}", conversationId, e);
-            Conversation conversation = conversationRepository.findById(conversationId).orElse(null);
-            if (conversation != null) {
-                conversation.setStage(ConversationStage.FAILED);
-                conversation.setStatus(Conversation.ConversationStatus.FAILED);
-                conversation.setErrorMessage("代码生成失败: " + e.getMessage());
+                conversation.setGeneratedCodePath(outputPath.toString());
                 conversationRepository.save(conversation);
 
-                sendProgressMessage(conversationId, "代码生成失败: " + e.getMessage(), "system");
+                sendProgressMessage(conversationId, "正在调用 iFlow SDK 生成代码，请稍候...", "system");
+
+                String uiPrototypeHtml = uiPrototypeService.getUIPrototype(conversationId);
+                String irContent = generateIRContent(conversation, uiPrototypeHtml);
+
+                promptTaskService.generateCode(irContent, outputPath, message -> {
+                    log.info("Code generation log: {}", message);
+                    sendProgressMessage(conversationId, message, "system");
+                });
+
+                backendGenerationFixer.fixGeneratedBackend(outputPath.resolve("backend"));
+
+                Path frontendDir = outputPath.resolve("frontend");
+                frontendScaffoldService.ensureVueScaffoldAndInjectPrototype(
+                        frontendDir,
+                        uiPrototypeHtml,
+                        conversation.getProjectName()
+                );
+
+                ensurePreviewScripts(outputPath);
+
+                conversation.setStage(ConversationStage.READY_TO_START);
+                conversation.setServiceStatus("CODE_GENERATED");
+                conversationRepository.save(conversation);
+
+                sendProgressMessage(conversationId, "代码生成完成，请确认启动服务", "system");
+
+                log.info("Code generation completed for conversation: {}", conversationId);
+            } catch (Exception e) {
+                log.error("Code generation failed for conversation: {}", conversationId, e);
+                Conversation conversation = conversationRepository.findById(conversationId).orElse(null);
+                if (conversation != null) {
+                    conversation.setStage(ConversationStage.FAILED);
+                    conversation.setStatus(Conversation.ConversationStatus.FAILED);
+                    conversation.setErrorMessage("代码生成失败: " + e.getMessage());
+                    conversationRepository.save(conversation);
+
+                    sendProgressMessage(conversationId, "代码生成失败: " + e.getMessage(), "system");
+                }
             }
+        } finally {
+            runningCodeGenerationConversations.remove(conversationId);
         }
+    }
+
+    public boolean isCodeGenerationInProgress(Long conversationId) {
+        return conversationId != null && runningCodeGenerationConversations.contains(conversationId);
     }
 
     void sendProgressMessage(Long conversationId, String content, String role) {

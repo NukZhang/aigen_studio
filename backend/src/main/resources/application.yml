@@ -39,7 +39,7 @@ iflow:
   sdk:
     endpoint: https://platform.iflow.cn
     api-key: ${IFLOW_API_KEY:sk-53b6922f314b9738c8083aabb2f7ceda}
-    timeout: 300000  # 5 minutes
+    timeout: 60000  # 1 minute
     auto-start-process: true
     file-access: true
     file-read-only: false
@@ -57,6 +57,13 @@ gitlab:
 # Tutorial Configuration
 tutorial:
   base-path: tutorials
+
+# Prompt templates
+aigen:
+  prompt:
+    understanding-template: classpath:prompt-templates/understanding-prompt.md
+    code-generation-template: classpath:prompt-templates/code-generation-prompt.md
+    ui-prototype-template: classpath:prompt-templates/ui-prototype-prompt.md
 
 # Logging
 logging:
