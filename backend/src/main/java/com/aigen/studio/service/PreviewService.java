@@ -6,16 +6,20 @@ import com.aigen.studio.entity.ConversationStage;
 import com.aigen.studio.repository.ConversationRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Service
@@ -24,6 +28,7 @@ public class PreviewService {
 
     private static final String PREVIEW_BASE_PATH = "/__preview__/";
     private static final String FRONTEND_ENTRY_MISSING_MESSAGE = "Frontend entry not found: index.html";
+    private static final String BACKEND_NOT_READY_MESSAGE_PREFIX = "Backend not ready";
     private static final String ROOT_PATH_NOT_READY_MESSAGE = "Conversation generated code path is not ready";
 
     private final PreviewConfigResolver previewConfigResolver;
@@ -31,6 +36,12 @@ public class PreviewService {
     private final ProcessLauncher processLauncher;
     private final PreviewScriptService previewScriptService;
     private final ProcessTerminator processTerminator;
+
+    @Value("${preview.backend-ready-timeout-ms:45000}")
+    private long backendReadyTimeoutMs;
+
+    @Value("${preview.backend-ready-check-interval-ms:200}")
+    private long backendReadyCheckIntervalMs;
 
     private final Object lock = new Object();
     private PreviewSession activeSession;
@@ -56,24 +67,45 @@ public class PreviewService {
             Process frontendProcess = null;
             String frontendMessage = null;
             Process backendProcess = null;
-
-            Path frontendDir = rootPath.resolve("frontend");
-            if (Files.isDirectory(frontendDir)) {
-                FrontendStartResult frontendResult = startFrontend(frontendDir, config.frontendPort(), conversationId);
-                frontendProcess = frontendResult.process();
-                frontendMessage = frontendResult.message();
-            }
+            String backendMessage = null;
 
             Path backendDir = rootPath.resolve("backend");
             if (Files.isDirectory(backendDir)) {
                 backendProcess = startBackend(backendDir, config.backendPort(), conversationId);
+                if (!waitForBackendReady(config.backendPort(), backendProcess)) {
+                    backendMessage = BACKEND_NOT_READY_MESSAGE_PREFIX + " on port " + config.backendPort();
+                    log.warn(
+                            "Backend readiness probe timeout for conversation {} on port {} after {} ms",
+                            conversationId,
+                            config.backendPort(),
+                            Math.max(backendReadyTimeoutMs, 0)
+                    );
+                }
+            }
+
+            Path frontendDir = rootPath.resolve("frontend");
+            if (Files.isDirectory(frontendDir)) {
+                FrontendStartResult frontendResult = startFrontend(
+                        frontendDir,
+                        config.frontendPort(),
+                        config.backendPort(),
+                        conversationId
+                );
+                frontendProcess = frontendResult.process();
+                frontendMessage = frontendResult.message();
             }
 
             activeSession = new PreviewSession(conversationId, frontendProcess, backendProcess, config);
 
             updateConversationAfterStart(conversation, frontendProcess, backendProcess, config);
 
-            return buildStatus(conversationId, config, frontendProcess, backendProcess, frontendMessage);
+            return buildStatus(
+                    conversationId,
+                    config,
+                    frontendProcess,
+                    backendProcess,
+                    mergeMessages(frontendMessage, backendMessage)
+            );
         }
     }
 
@@ -134,13 +166,15 @@ public class PreviewService {
         }
     }
 
-    private FrontendStartResult startFrontend(Path frontendDir, int port, Long conversationId) {
+    private FrontendStartResult startFrontend(Path frontendDir, int port, int backendPort, Long conversationId) {
         if (!hasFrontendEntry(frontendDir)) {
             log.warn("Frontend entry not found at {}", frontendDir.resolve("index.html"));
             return new FrontendStartResult(null, FRONTEND_ENTRY_MISSING_MESSAGE);
         }
         Path scriptPath = previewScriptService.ensureFrontendStartScript(frontendDir);
         previewScriptService.ensureFrontendRouterBase(frontendDir);
+        previewScriptService.ensureFrontendApiProxyTarget(frontendDir, backendPort);
+        previewScriptService.ensureFrontendApiBasePath(frontendDir, "/subapi");
         ensureFrontendDependencies(frontendDir);
         List<String> command = buildFrontendCommand(scriptPath, port);
         Path logFile = getLogFile(conversationId, "frontend");
@@ -158,12 +192,12 @@ public class PreviewService {
             command = List.of(
                     "mvn", "spring-boot:run", 
                     "-Dspring-boot.run.mainClass=" + mainClass,
-                    "-Dserver.port=" + port
+                    "-Dspring-boot.run.arguments=--server.port=" + port
             );
         } else {
             // 如果找不到主类，使用默认命令
             command = List.of(
-                    "mvn", "spring-boot:run", "-Dserver.port=" + port
+                    "mvn", "spring-boot:run", "-Dspring-boot.run.arguments=--server.port=" + port
             );
         }
         
@@ -370,11 +404,51 @@ public class PreviewService {
         }
     }
 
+    private boolean waitForBackendReady(int backendPort, Process backendProcess) {
+        long timeoutMs = Math.max(backendReadyTimeoutMs, 0);
+        long checkIntervalMs = Math.max(backendReadyCheckIntervalMs, 10);
+
+        long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs);
+        while (System.nanoTime() < deadlineNanos) {
+            if (isBackendHttpReady(backendPort)) {
+                return true;
+            }
+            if (!isAlive(backendProcess)) {
+                return false;
+            }
+            sleepQuietly(Math.min(checkIntervalMs, 1000));
+        }
+        return isBackendHttpReady(backendPort);
+    }
+
+    private void sleepQuietly(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private String mergeMessages(String first, String second) {
+        boolean firstBlank = first == null || first.isBlank();
+        boolean secondBlank = second == null || second.isBlank();
+        if (firstBlank && secondBlank) {
+            return null;
+        }
+        if (firstBlank) {
+            return second;
+        }
+        if (secondBlank) {
+            return first;
+        }
+        return first + "; " + second;
+    }
+
 
     private PreviewStatusDTO buildStatus(Long conversationId, PreviewConfig config, Process frontend, Process backend, String message) {
         // 优先使用端口检测，因为进程对象在后端重启后会丢失
         boolean frontendRunning = isPortInUse(config.frontendPort()) || isAlive(frontend);
-        boolean backendRunning = isPortInUse(config.backendPort()) || isAlive(backend);
+        boolean backendRunning = isBackendRunning(config.backendPort(), backend);
         boolean running = frontendRunning || backendRunning;
 
         String frontendUrl = frontendRunning ? "http://localhost:" + config.frontendPort() : null;
@@ -391,6 +465,36 @@ public class PreviewService {
                 backendUrl,
                 message
         );
+    }
+
+    private boolean isBackendRunning(int backendPort, Process backend) {
+        // 如果当前会话持有后端进程对象，优先以该进程真实存活状态为准，避免被无关端口占用误判。
+        if (backend != null) {
+            return isAlive(backend);
+        }
+        return isBackendHttpReady(backendPort);
+    }
+
+    private boolean isBackendHttpReady(int port) {
+        if (port <= 0 || port > 65535) {
+            return false;
+        }
+        HttpURLConnection connection = null;
+        try {
+            URL url = new URL("http://127.0.0.1:" + port + "/");
+            connection = (HttpURLConnection) url.openConnection();
+            connection.setConnectTimeout(300);
+            connection.setReadTimeout(300);
+            connection.setRequestMethod("GET");
+            int status = connection.getResponseCode();
+            return status >= 100 && status <= 599;
+        } catch (IOException e) {
+            return false;
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
     }
 
     private boolean isAlive(Process process) {

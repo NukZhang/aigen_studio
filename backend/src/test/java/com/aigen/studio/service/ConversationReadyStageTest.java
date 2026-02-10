@@ -367,6 +367,28 @@ class ConversationReadyStageTest {
         }
     }
 
+    @Test
+    void previewingStageAcceptsIssueReportAsRequirementRefinement() {
+        Conversation conversation = new Conversation();
+        conversation.setProjectName("Test");
+        conversation.setUserRequirement("Generate a demo app");
+        conversation.setAiUnderstanding("Initial understanding");
+        conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+        conversation.setStage(ConversationStage.PREVIEWING);
+        conversation = conversationRepository.save(conversation);
+
+        MessageDTO message = new MessageDTO();
+        message.setContent("点击开始测试调出错，status 400，需要修改");
+
+        MessageDTO response = conversationService.sendMessageToNewConversation(conversation.getId(), message);
+        assertNotNull(response);
+        assertTrue(response.getContent().contains("请问这个理解是否正确"));
+
+        Conversation updated = conversationRepository.findById(conversation.getId()).orElseThrow();
+        assertEquals(ConversationStage.UNDERSTANDING_CONFIRMED, updated.getStage());
+        assertTrue(updated.getUserRequirement().contains("status 400"));
+    }
+
     private Conversation waitForStage(Long conversationId, ConversationStage stage, int timeoutSeconds)
             throws InterruptedException {
         long deadline = System.currentTimeMillis() + timeoutSeconds * 1000L;

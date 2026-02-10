@@ -36,7 +36,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
         "spring.datasource.driver-class-name=org.h2.Driver",
         "spring.datasource.username=sa",
         "spring.datasource.password=",
-        "spring.jpa.hibernate.ddl-auto=create-drop"
+        "spring.jpa.hibernate.ddl-auto=create-drop",
+        "preview.backend-ready-timeout-ms=10",
+        "preview.backend-ready-check-interval-ms=5"
 })
 class PreviewServiceTest {
 
@@ -96,8 +98,10 @@ class PreviewServiceTest {
         assertEquals("http://localhost:3002", status.getFrontendUrl());
         assertEquals("http://localhost:8081", status.getBackendUrl());
         assertEquals(2, processLauncher.startedBuilders.size());
-        assertEquals(List.of("sh", "scripts/start-preview.sh", "3002", "/__preview__/"),
+        assertEquals(List.of("mvn", "spring-boot:run", "-Dspring-boot.run.arguments=--server.port=8081"),
                 processLauncher.startedBuilders.get(0).command());
+        assertEquals(List.of("sh", "scripts/start-preview.sh", "3002", "/__preview__/"),
+                processLauncher.startedBuilders.get(1).command());
 
         Conversation updated = conversationRepository.findById(conversation.getId()).orElseThrow();
         assertEquals(ConversationStage.PREVIEWING, updated.getStage());
@@ -120,6 +124,52 @@ class PreviewServiceTest {
         assertEquals(1, processLauncher.startedBuilders.size());
         assertEquals(List.of("sh", "scripts/start-preview.sh", "3002", "/__preview__/"),
                 processLauncher.startedBuilders.get(0).command());
+    }
+
+    @Test
+    void startPreviewRewritesFrontendApiBasePathToSubapi(@TempDir Path tmp) throws Exception {
+        Path frontendDir = Files.createDirectories(tmp.resolve("frontend"));
+        Files.createDirectories(frontendDir.resolve("node_modules"));
+        Files.createDirectories(frontendDir.resolve("src/api"));
+        Files.writeString(frontendDir.resolve("index.html"), "<!doctype html><div id=\"app\"></div>");
+        Files.writeString(frontendDir.resolve("src/api/http.ts"), """
+                import axios from 'axios'
+                export const http = axios.create({
+                  baseURL: '/api',
+                  timeout: 10000
+                })
+                """);
+        Files.writeString(tmp.resolve("application.yml"), "preview:\n  frontendPort: 3002\n  backendPort: 8082\n");
+
+        Conversation conversation = createConversation(tmp);
+        PreviewStatusDTO status = previewService.startPreview(conversation.getId());
+
+        assertTrue(status.isFrontendRunning());
+        String apiFileContent = Files.readString(frontendDir.resolve("src/api/http.ts"));
+        assertTrue(apiFileContent.contains("baseURL: '/subapi'"));
+        assertFalse(apiFileContent.contains("baseURL: '/api'"));
+    }
+
+    @Test
+    void startPreviewReportsBackendNotReadyWhenProbeTimesOut(@TempDir Path tmp) throws Exception {
+        Files.createDirectories(tmp.resolve("frontend"));
+        Files.createDirectories(tmp.resolve("frontend/node_modules"));
+        Files.writeString(tmp.resolve("frontend/index.html"), "<!doctype html><div id=\"app\"></div>");
+        Files.createDirectories(tmp.resolve("backend"));
+        Files.writeString(tmp.resolve("application.yml"), "preview:\n  frontendPort: 3002\n  backendPort: 0\n");
+
+        Conversation conversation = createConversation(tmp);
+        processLauncher.enqueueProcess(new DeadProcess());
+
+        PreviewStatusDTO status = previewService.startPreview(conversation.getId());
+
+        assertTrue(status.isRunning());
+        assertTrue(status.isFrontendRunning());
+        assertFalse(status.isBackendRunning());
+        assertTrue(
+                status.getMessage() != null && status.getMessage().contains("Backend not ready"),
+                () -> "Unexpected status message: " + status.getMessage()
+        );
     }
 
     @Test
@@ -375,6 +425,13 @@ class PreviewServiceTest {
         @Override
         public void destroy() {
             throw new RuntimeException("boom");
+        }
+    }
+
+    static class DeadProcess extends FakeProcess {
+        @Override
+        public boolean isAlive() {
+            return false;
         }
     }
 

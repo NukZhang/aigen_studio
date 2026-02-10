@@ -75,6 +75,11 @@ class PromptTaskServiceTest {
         assertTrue(prompt.contains("package.json"));
         assertTrue(prompt.contains("createWebHistory(import.meta.env.BASE_URL)"));
         assertTrue(prompt.contains("不要只创建目录"));
+        assertTrue(prompt.contains("真实调用后端服务"));
+        assertTrue(prompt.contains("frontend/src/api/"));
+        assertTrue(prompt.contains("/api"));
+        assertTrue(prompt.contains("<router-view"));
+        assertTrue(prompt.contains("代理"));
     }
 
     @Test

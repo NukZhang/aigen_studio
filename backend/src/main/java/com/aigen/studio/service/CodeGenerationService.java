@@ -14,8 +14,12 @@ import org.springframework.stereotype.Service;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 @Slf4j
 @Service
@@ -34,6 +38,10 @@ public class CodeGenerationService {
     private String outputDir;
 
     private final Set<Long> runningCodeGenerationConversations = ConcurrentHashMap.newKeySet();
+
+    private static final Pattern FRONTEND_API_CALL_PATTERN = Pattern.compile("\\baxios\\s*\\.|\\bfetch\\s*\\(|\\b\\w+\\s*\\.(get|post|put|delete|request)\\s*\\(");
+    private static final Pattern FRONTEND_BACKEND_TARGET_PATTERN = Pattern.compile("['\"]\\/api(?:[/'\"?]|$)|baseURL\\s*:\\s*['\"][^'\"]+['\"]");
+    private static final Pattern FRONTEND_API_IMPORT_PATTERN = Pattern.compile("from\\s+['\"][^'\"]*api[^'\"]*['\"]");
 
     @Async
     public void generateCodeForConversationAsync(Long conversationId) {
@@ -69,6 +77,7 @@ public class CodeGenerationService {
                         uiPrototypeHtml,
                         conversation.getProjectName()
                 );
+                verifyFrontendCallsBackend(frontendDir);
 
                 ensurePreviewScripts(outputPath);
 
@@ -139,6 +148,12 @@ public class CodeGenerationService {
         if (uiPrototypeHtml != null && !uiPrototypeHtml.trim().isEmpty()) {
             ir.append("  \"uiPrototypeHtml\": \"").append(escapeJson(uiPrototypeHtml.replace("\n", " ").replace("\"", "\\\""))).append("\",\n");
         }
+
+        ir.append("  \"frontendBackendIntegration\": {\n");
+        ir.append("    \"required\": true,\n");
+        ir.append("    \"apiBasePath\": \"/api\",\n");
+        ir.append("    \"notes\": \"frontend must call backend services using axios or fetch, and avoid pure mock-only pages\"\n");
+        ir.append("  },\n");
         
         ir.append("  \"modules\": [\n");
         ir.append("    {\n");
@@ -166,5 +181,96 @@ public class CodeGenerationService {
                  .replace("\n", "\\n")
                  .replace("\r", "\\r")
                  .replace("\t", "\\t");
+    }
+
+    private void verifyFrontendCallsBackend(Path frontendDir) {
+        if (frontendDir == null || !Files.isDirectory(frontendDir)) {
+            throw new RuntimeException("生成代码校验失败: 前端目录不存在，无法验证后端调用");
+        }
+
+        Path srcDir = frontendDir.resolve("src");
+        if (!Files.isDirectory(srcDir)) {
+            throw new RuntimeException("生成代码校验失败: 缺少 frontend/src，无法验证后端调用");
+        }
+
+        Path appVue = srcDir.resolve("App.vue");
+        String appContent = readFileSilently(appVue);
+        boolean appHasRouterView = appContent.contains("router-view");
+        boolean appHasBackendCallHint = FRONTEND_API_CALL_PATTERN.matcher(appContent).find()
+                || FRONTEND_API_IMPORT_PATTERN.matcher(appContent).find();
+
+        String mainContent = readFileSilently(resolveFirstExisting(srcDir, List.of("main.ts", "main.js")));
+        boolean mainUsesRouter = mainContent.contains("use(router)") || mainContent.contains("createRouter(");
+
+        if (mainUsesRouter && !appHasRouterView) {
+            throw new RuntimeException("生成代码校验失败: main 入口使用了路由，但 App.vue 缺少 <router-view>，页面无法触达后端调用逻辑");
+        }
+
+        List<Path> sourceFiles = new ArrayList<>();
+        try (Stream<Path> stream = Files.walk(srcDir)) {
+            stream.filter(Files::isRegularFile)
+                    .filter(path -> isFrontendSourceFile(path.getFileName().toString()))
+                    .forEach(sourceFiles::add);
+        } catch (Exception e) {
+            throw new RuntimeException("生成代码校验失败: 扫描前端源码失败", e);
+        }
+
+        boolean hasApiCall = false;
+        boolean hasBackendTarget = false;
+        boolean hasApiImport = false;
+        for (Path sourceFile : sourceFiles) {
+            String content = readFileSilently(sourceFile);
+            if (!hasApiCall && FRONTEND_API_CALL_PATTERN.matcher(content).find()) {
+                hasApiCall = true;
+            }
+            if (!hasBackendTarget && FRONTEND_BACKEND_TARGET_PATTERN.matcher(content).find()) {
+                hasBackendTarget = true;
+            }
+            if (!hasApiImport && FRONTEND_API_IMPORT_PATTERN.matcher(content).find()) {
+                hasApiImport = true;
+            }
+            if (hasApiCall && (hasBackendTarget || hasApiImport)) {
+                break;
+            }
+        }
+
+        if (!(hasApiCall && (hasBackendTarget || hasApiImport || appHasBackendCallHint))) {
+            throw new RuntimeException("生成代码校验失败: 前端未检测到有效后端 API 调用，请重新生成代码");
+        }
+
+        log.info(
+                "Frontend-backend integration verified: appHasRouterView={}, mainUsesRouter={}, hasApiCall={}, hasBackendTarget={}, hasApiImport={}",
+                appHasRouterView, mainUsesRouter, hasApiCall, hasBackendTarget, hasApiImport
+        );
+    }
+
+    private Path resolveFirstExisting(Path dir, List<String> candidates) {
+        for (String candidate : candidates) {
+            Path path = dir.resolve(candidate);
+            if (Files.exists(path)) {
+                return path;
+            }
+        }
+        return null;
+    }
+
+    private boolean isFrontendSourceFile(String name) {
+        return name.endsWith(".ts")
+                || name.endsWith(".js")
+                || name.endsWith(".vue")
+                || name.endsWith(".tsx")
+                || name.endsWith(".jsx");
+    }
+
+    private String readFileSilently(Path file) {
+        if (file == null || !Files.exists(file)) {
+            return "";
+        }
+        try {
+            return Files.readString(file);
+        } catch (Exception e) {
+            log.warn("Failed to read file for frontend-backend verification: {}", file, e);
+            return "";
+        }
     }
 }

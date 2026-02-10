@@ -32,6 +32,28 @@ class FrontendScaffoldServiceTest {
         assertFalse(templateSection.contains("<style"), "template should not contain style tags");
     }
 
+    @Test
+    void keepsExistingAppVueWhenAiAlreadyGeneratedEntry() throws Exception {
+        FrontendScaffoldService service = new FrontendScaffoldService();
+        Path frontendDir = tempDir.resolve("frontend");
+        Path srcDir = frontendDir.resolve("src");
+        Files.createDirectories(srcDir);
+        Path appVue = srcDir.resolve("App.vue");
+        String existingApp = """
+                <template>
+                  <router-view />
+                </template>
+                """;
+        Files.writeString(appVue, existingApp);
+
+        String prototypeHtml = "<html><body><div class=\"prototype\">prototype</div></body></html>";
+        service.ensureVueScaffoldAndInjectPrototype(frontendDir, prototypeHtml, "Demo");
+
+        String updated = Files.readString(appVue);
+        assertTrue(updated.contains("<router-view"));
+        assertFalse(updated.contains("prototype"));
+    }
+
     private String extractSection(String content, String start, String end) {
         int startIndex = content.indexOf(start);
         int endIndex = content.indexOf(end);

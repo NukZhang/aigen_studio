@@ -73,7 +73,7 @@ describe('PreviewPanel url resolution', () => {
     wrapper.unmount()
   })
 
-  it('defaults to proxy path when env flag is not set', async () => {
+  it('defaults to direct host when env flag is not set', async () => {
     vi.stubEnv('VITE_PREVIEW_PROXY', '')
     Object.defineProperty(window, 'location', {
       value: new URL('http://dev-host:3000'),
@@ -105,7 +105,7 @@ describe('PreviewPanel url resolution', () => {
 
     await flushPromises()
 
-    expect(wrapper.find('.url').text()).toBe('http://dev-host:3000/__preview__/')
+    expect(wrapper.find('.url').text()).toBe('http://dev-host:3002/__preview__/')
 
     wrapper.unmount()
   })

@@ -17,6 +17,11 @@ public class BackendGenerationFixer {
     private static final Pattern SELECT_COUNT_CAST = Pattern.compile(
             "int\\s+(\\w+)\\s*=\\s*\\(int\\)\\s*([\\w.]+)\\.selectCount\\(null\\)\\s*;?"
     );
+    private static final Pattern SPRING_BOOT_PARENT_VERSION = Pattern.compile(
+            "<parent>[\\s\\S]*?<artifactId>spring-boot-starter-parent</artifactId>[\\s\\S]*?<version>\\s*3\\.[^<]*</version>[\\s\\S]*?</parent>"
+    );
+    private static final String MYBATIS_PLUS_BOOT2_ARTIFACT = "<artifactId>mybatis-plus-boot-starter</artifactId>";
+    private static final String MYBATIS_PLUS_BOOT3_ARTIFACT = "<artifactId>mybatis-plus-spring-boot3-starter</artifactId>";
 
     public void fixGeneratedBackend(Path backendDir) {
         if (backendDir == null || !Files.isDirectory(backendDir)) {
@@ -28,6 +33,7 @@ public class BackendGenerationFixer {
         } catch (Exception e) {
             log.warn("Backend fixer failed", e);
         }
+        fixPomFile(backendDir.resolve("pom.xml"));
     }
 
     void fixJavaFile(Path file) {
@@ -53,6 +59,30 @@ public class BackendGenerationFixer {
             }
         } catch (Exception e) {
             log.warn("Failed to fix file {}", file, e);
+        }
+    }
+
+    void fixPomFile(Path pomFile) {
+        if (pomFile == null || !Files.exists(pomFile)) {
+            return;
+        }
+        try {
+            String content = Files.readString(pomFile);
+            String updated = content;
+
+            boolean isSpringBoot3Project = SPRING_BOOT_PARENT_VERSION.matcher(content).find();
+            if (isSpringBoot3Project
+                    && content.contains(MYBATIS_PLUS_BOOT2_ARTIFACT)
+                    && !content.contains(MYBATIS_PLUS_BOOT3_ARTIFACT)) {
+                updated = updated.replace(MYBATIS_PLUS_BOOT2_ARTIFACT, MYBATIS_PLUS_BOOT3_ARTIFACT);
+                log.info("Updated MyBatis-Plus starter to Spring Boot 3 compatible artifact: {}", pomFile);
+            }
+
+            if (!updated.equals(content)) {
+                Files.writeString(pomFile, updated);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to fix pom file {}", pomFile, e);
         }
     }
 }

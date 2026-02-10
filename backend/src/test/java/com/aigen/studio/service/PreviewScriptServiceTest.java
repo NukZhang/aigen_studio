@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.lang.reflect.Method;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.fail;
 
 class PreviewScriptServiceTest {
@@ -78,5 +79,53 @@ class PreviewScriptServiceTest {
         } catch (Exception e) {
             fail("Failed to invoke ensureFrontendRouterBase: " + e.getMessage());
         }
+    }
+
+    @Test
+    void updatesViteProxyTargetToPreviewBackendPort(@TempDir Path tmp) throws Exception {
+        Path frontendDir = Files.createDirectories(tmp.resolve("frontend"));
+        Path viteConfig = frontendDir.resolve("vite.config.ts");
+        Files.writeString(viteConfig, """
+                import { defineConfig } from 'vite'
+                export default defineConfig({
+                  server: {
+                    proxy: {
+                      '/api': {
+                        target: 'http://localhost:8080',
+                        changeOrigin: true
+                      }
+                    }
+                  }
+                })
+                """);
+
+        PreviewScriptService service = new PreviewScriptService();
+        service.ensureFrontendApiProxyTarget(frontendDir, 8081);
+
+        String updated = Files.readString(viteConfig);
+        assertTrue(updated.contains("'/subapi': {"));
+        assertTrue(updated.contains("target: 'http://localhost:8081'"));
+        assertTrue(updated.contains("rewrite: (path) => path.replace(/^\\/subapi/, '/api')"));
+    }
+
+    @Test
+    void rewritesFrontendApiBasePathToSubapi(@TempDir Path tmp) throws Exception {
+        Path frontendDir = Files.createDirectories(tmp.resolve("frontend"));
+        Path srcApiDir = Files.createDirectories(frontendDir.resolve("src/api"));
+        Path apiFile = srcApiDir.resolve("http.ts");
+        Files.writeString(apiFile, """
+                import axios from 'axios'
+                export const http = axios.create({
+                  baseURL: '/api',
+                  timeout: 10000
+                })
+                """);
+
+        PreviewScriptService service = new PreviewScriptService();
+        service.ensureFrontendApiBasePath(frontendDir, "/subapi");
+
+        String updated = Files.readString(apiFile);
+        assertTrue(updated.contains("baseURL: '/subapi'"));
+        assertFalse(updated.contains("baseURL: '/api'"));
     }
 }

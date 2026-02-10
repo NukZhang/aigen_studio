@@ -170,7 +170,7 @@ const shouldUsePreviewProxy = () => {
   const envFlag = import.meta.env.VITE_PREVIEW_PROXY
   if (envFlag === 'true') return true
   if (envFlag === 'false') return false
-  return true // 默认使用proxy，避免跨域与base路径问题
+  return false // 默认直连预览服务，避免生成页面将 /api 误指向主站 3000
 }
 
 const previewProxyPath = normalizeProxyPath(

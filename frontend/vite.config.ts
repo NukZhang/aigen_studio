@@ -5,6 +5,7 @@ import { resolve } from 'path'
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const previewProxyTarget = env.VITE_PREVIEW_PROXY_TARGET || 'http://localhost:3002'
+  const previewApiProxyTarget = env.VITE_PREVIEW_API_PROXY_TARGET || 'http://localhost:8081'
 
   return {
     plugins: [vue()],
@@ -20,6 +21,11 @@ export default defineConfig(({ mode }) => {
         '/api/v1': {
           target: 'http://localhost:8081',
           changeOrigin: true
+        },
+        '/subapi': {
+          target: previewApiProxyTarget,
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/subapi/, '/api')
         },
         '/api': {
           target: 'http://localhost:8080',
