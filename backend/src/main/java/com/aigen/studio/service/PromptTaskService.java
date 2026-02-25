@@ -33,6 +33,9 @@ public class PromptTaskService {
     @Value("${aigen.prompt.code-generation-template:classpath:prompt-templates/code-generation-prompt.md}")
     private String codeGenerationPromptTemplateLocation = "classpath:prompt-templates/code-generation-prompt.md";
 
+    @Value("${iflow.sdk.code-task-timeout-ms:600000}")
+    private long codeTaskTimeoutMillis = 600000L;
+
     /**
      * 理解需求
      */
@@ -135,7 +138,7 @@ public class PromptTaskService {
         };
 
         String taskPrompt = buildCodeGenerationPrompt(irContent, outputPath);
-        codingService.executeTask(taskPrompt, outputPath, handler);
+        codingService.executeTask(taskPrompt, outputPath, handler, codeTaskTimeoutMillis);
 
         log.info("Code generation completed");
     }

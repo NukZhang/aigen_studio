@@ -130,4 +130,16 @@ describe('Workspace stage indicator', () => {
 
     wrapper.unmount()
   })
+
+  it('treats CLARIFYING as understanding stage', async () => {
+    const wrapper = await mountWorkspaceWithStage('CLARIFYING')
+    const items = wrapper.findAll('.stage-item')
+    const labels = items.map(item => item.find('.stage-label').text())
+    const understandingIndex = labels.indexOf('理解需求')
+
+    expect(understandingIndex).toBeGreaterThanOrEqual(0)
+    expect(items[understandingIndex].classes()).toContain('active')
+
+    wrapper.unmount()
+  })
 })

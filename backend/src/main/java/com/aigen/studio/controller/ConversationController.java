@@ -3,6 +3,7 @@ package com.aigen.studio.controller;
 import com.aigen.studio.dto.ConfirmUnderstandingRequest;
 import com.aigen.studio.dto.ConversationDTO;
 import com.aigen.studio.dto.MessageDTO;
+import com.aigen.studio.dto.UpdateConversationTitleRequest;
 import com.aigen.studio.service.ConversationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -62,6 +63,18 @@ public class ConversationController {
         log.info("Sending message to new conversation {}: {}", id, message.getContent());
         MessageDTO response = conversationService.sendMessageToNewConversation(id, message);
         return ResponseEntity.ok(response);
+    }
+
+    /**
+     * 更新对话标题
+     */
+    @PatchMapping("/new/{id}/title")
+    public ResponseEntity<ConversationDTO> updateConversationTitle(
+            @PathVariable Long id,
+            @RequestBody UpdateConversationTitleRequest request) {
+        log.info("Updating title for conversation {}", id);
+        ConversationDTO conversation = conversationService.updateConversationTitle(id, request.getProjectName());
+        return ResponseEntity.ok(conversation);
     }
 
     /**

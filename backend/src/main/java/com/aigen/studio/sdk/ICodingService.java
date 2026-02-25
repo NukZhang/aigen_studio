@@ -19,6 +19,18 @@ public interface ICodingService {
     void executeTask(String prompt, Path workDir, MessageHandler handler);
 
     /**
+     * 执行任务（自定义超时时间）
+     *
+     * @param prompt 任务提示词
+     * @param workDir 工作目录
+     * @param handler 消息处理器
+     * @param timeoutMillis 超时时间（毫秒）
+     */
+    default void executeTask(String prompt, Path workDir, MessageHandler handler, long timeoutMillis) {
+        executeTask(prompt, workDir, handler);
+    }
+
+    /**
      * 消息处理器接口
      */
     interface MessageHandler {

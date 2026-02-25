@@ -38,8 +38,14 @@ spring:
 iflow:
   sdk:
     endpoint: https://platform.iflow.cn
-    api-key: ${IFLOW_API_KEY:sk-53b6922f314b9738c8083aabb2f7ceda}
+    api-key: ${IFLOW_API_KEY:***REMOVED***}
     timeout: 60000  # 1 minute
+    ui-task-timeout-ms: 300000  # UI prototype generation can be slower before first model response
+    ui-heartbeat-interval-ms: 15000
+    ui-heartbeat-initial-delay-ms: 15000
+    code-task-timeout-ms: 600000  # Code generation often needs longer end-to-end execution time
+    code-heartbeat-interval-ms: 15000
+    code-heartbeat-initial-delay-ms: 15000
     auto-start-process: true
     file-access: true
     file-read-only: false

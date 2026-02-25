@@ -3,7 +3,46 @@
     <!-- 左侧对话区 -->
     <div class="chat-panel">
       <div class="chat-header">
-        <h2 class="project-title">{{ conversation?.projectName || 'AI 开发者工作区' }}</h2>
+        <div v-if="conversation && isEditingTitle" class="title-edit-container">
+          <el-input
+            v-model="editingTitle"
+            class="title-edit-input"
+            size="small"
+            maxlength="50"
+            @keyup.enter="saveConversationTitle"
+            @keyup.esc="cancelTitleEdit"
+          />
+          <el-button
+            class="title-edit-action"
+            type="primary"
+            size="small"
+            :loading="isUpdatingTitle"
+            @click="saveConversationTitle"
+          >
+            保存
+          </el-button>
+          <el-button
+            class="title-edit-action"
+            size="small"
+            :disabled="isUpdatingTitle"
+            @click="cancelTitleEdit"
+          >
+            取消
+          </el-button>
+        </div>
+        <div v-else class="title-display-container">
+          <h2 class="project-title">{{ conversation?.projectName || 'AI 开发者工作区' }}</h2>
+          <el-button
+            v-if="conversation"
+            class="title-edit-button"
+            text
+            circle
+            size="small"
+            @click="startTitleEdit"
+          >
+            <el-icon><EditPen /></el-icon>
+          </el-button>
+        </div>
       </div>
 
       <!-- 历史对话列表抽屉 -->
@@ -98,6 +137,54 @@
               </div>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- 需求澄清面板 -->
+      <div class="clarifying-panel" v-if="conversation?.stage === 'CLARIFYING'">
+        <div class="confirm-header">
+          <el-icon><QuestionFilled /></el-icon>
+          <span>需求澄清</span>
+        </div>
+        <div class="confirm-content">
+          <h4>请先回答当前问题（单题推进）</h4>
+          <div v-if="currentClarificationQuestion" class="clarifying-question-card">
+            <p class="clarifying-question-text">{{ currentClarificationQuestion.question }}</p>
+            <div v-if="currentClarificationQuestion.options.length > 0" class="clarifying-options">
+              <el-button
+                v-for="option in currentClarificationQuestion.options"
+                :key="option"
+                class="clarifying-option-button"
+                size="small"
+                :disabled="isSending || isSubmittingClarification"
+                :loading="isSubmittingClarification"
+                @click="submitClarificationAnswer(option)"
+              >
+                {{ option }}
+              </el-button>
+            </div>
+            <div class="clarifying-custom-answer">
+              <el-input
+                v-model="clarificationCustomAnswer"
+                size="small"
+                placeholder="或输入其他答案"
+                @keyup.enter="submitCustomClarificationAnswer"
+              />
+              <el-button
+                type="primary"
+                size="small"
+                class="clarifying-submit-button"
+                :disabled="!clarificationCustomAnswer.trim() || isSending || isSubmittingClarification"
+                :loading="isSubmittingClarification"
+                @click="submitCustomClarificationAnswer"
+              >
+                提交
+              </el-button>
+            </div>
+          </div>
+          <p v-else class="clarifying-fallback-hint">请在下方输入补充信息，我会继续澄清。</p>
+          <h4>当前理解内容：</h4>
+          <div class="understanding-text" v-html="renderMarkdown(clarificationDisplayContent)"></div>
         </div>
       </div>
 
@@ -379,13 +466,16 @@ import {
   Paperclip,
   Microphone,
   Close,
-  Loading
+  Loading,
+  EditPen,
+  QuestionFilled
 } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { conversationApi, previewApi, type FileNode, type Model } from '../api/job'
 import { getTutorialTree, getTutorialContent, type TutorialNode } from '../api/tutorial'
 import { uiPrototypeApi } from '../api/ui-prototype'
+import { parseClarificationPayload, stripClarificationPayload } from '../utils/clarification'
 import FileBrowser from './FileBrowser.vue'
 import CodeEditor from './CodeEditor.vue'
 import PreviewPanel from './PreviewPanel.vue'
@@ -397,6 +487,7 @@ interface Message {
   content: string
   timestamp: string
   senderName: string
+  clarificationQuestionId?: string
   toolCalls?: ToolCall[]
 }
 
@@ -412,6 +503,11 @@ interface Conversation {
   id: number
   projectName: string
   stage?: string
+  aiUnderstanding?: string
+  currentQuestionIndex?: number | null
+  answeredQuestionIds?: string[]
+  uiPrototypeContent?: string
+  uiConfirmed?: boolean
   generatedCodePath?: string
   messages: Message[]
 }
@@ -422,6 +518,7 @@ const conversation = ref<Conversation | null>(null)
 const inputMessage = ref('')
 const isSending = ref(false)
 const isConfirming = ref(false)
+const isSubmittingClarification = ref(false)
 const isStartingPreview = ref(false)
 const isConfirmingUI = ref(false)
 const isRegeneratingUI = ref(false)
@@ -431,6 +528,9 @@ const selectedFile = ref<FileNode | null>(null)
 const conversationId = ref<number | null>(null)
 const showConversationList = ref(false)
 const conversationList = ref<Conversation[]>([])
+const isEditingTitle = ref(false)
+const isUpdatingTitle = ref(false)
+const editingTitle = ref('')
 const tutorialTree = ref<TutorialNode[]>([])
 const tutorialHeadings = ref<any[]>([])
 const currentTutorialContent = ref('')
@@ -460,6 +560,7 @@ const selectedModel = ref<Model | null>(availableModels.value[0])
 const uploadRef = ref()
 const uploadedFiles = ref<File[]>([])
 const isLoadingConversation = ref(false)
+const clarificationCustomAnswer = ref('')
 const AUTO_REFRESH_INTERVAL = 3000
 const conversationFileStages = new Set([
   'UI_GENERATING',
@@ -494,6 +595,7 @@ const generationStageKeys = generationStages.map(stage => stage.key)
 const stageLabelMap: Record<string, string> = {
   NEED_INPUT: '需求输入',
   UNDERSTANDING: '理解需求',
+  CLARIFYING: '理解需求',
   UNDERSTANDING_CONFIRMED: '理解需求',
   UI_GENERATING: '生成UI',
   UI_READY: '生成UI',
@@ -510,6 +612,7 @@ const stageLabelMap: Record<string, string> = {
 const getDisplayStage = (internalStage: string | null | undefined): string => {
   if (!internalStage) return 'NEED_INPUT'
   switch (internalStage) {
+    case 'CLARIFYING':
     case 'UNDERSTANDING_CONFIRMED':
       return 'UNDERSTANDING'  // 确认理解仍显示在"理解需求"步骤
     case 'UI_READY':
@@ -539,6 +642,9 @@ const displayStages = computed(() => {
 
 const normalizeStageForProgress = (stage?: string | null) => {
   if (!stage) return null
+  if (stage === 'CLARIFYING' || stage === 'UNDERSTANDING_CONFIRMED') {
+    return 'UNDERSTANDING'
+  }
   if (stage === 'UI_READY' || stage === 'UI_CONFIRMED') {
     return 'UI_GENERATING'
   }
@@ -577,6 +683,29 @@ const isStageActive = (stageKey: string) => {
 const isStageFailed = (stageKey: string) => {
   return conversation.value?.stage === 'FAILED' && stageKey === 'READY_TO_START'
 }
+
+const clarificationPayload = computed(() => {
+  return parseClarificationPayload(conversation.value?.aiUnderstanding)
+})
+
+const currentClarificationQuestion = computed(() => {
+  const payload = clarificationPayload.value
+  if (!payload || payload.questions.length === 0) {
+    return null
+  }
+
+  const currentIndex = conversation.value?.currentQuestionIndex
+  if (typeof currentIndex === 'number' && currentIndex >= 0 && currentIndex < payload.questions.length) {
+    return payload.questions[currentIndex]
+  }
+
+  const answeredIds = new Set(conversation.value?.answeredQuestionIds ?? [])
+  return payload.questions.find(question => !answeredIds.has(question.id)) ?? null
+})
+
+const clarificationDisplayContent = computed(() => {
+  return stripClarificationPayload(conversation.value?.aiUnderstanding)
+})
 
 
 onMounted(async () => {
@@ -643,6 +772,8 @@ const loadNewConversation = async (id: number, autoScroll: boolean = true) => {
     const previousCount = conversation.value?.messages.length ?? 0
     const response = await conversationApi.getNewConversation(id)
     conversation.value = response.data
+    isEditingTitle.value = false
+    editingTitle.value = ''
     await nextTick()
     if (autoScroll) {
       const newCount = conversation.value?.messages.length ?? 0
@@ -680,7 +811,47 @@ const createNewConversation = async () => {
   }
 }
 
-const sendMessageToNewConversation = async (content: string) => {
+const startTitleEdit = () => {
+  if (!conversation.value) {
+    return
+  }
+  editingTitle.value = conversation.value.projectName || ''
+  isEditingTitle.value = true
+}
+
+const cancelTitleEdit = () => {
+  isEditingTitle.value = false
+  editingTitle.value = ''
+}
+
+const saveConversationTitle = async () => {
+  if (!conversation.value || !conversationId.value) {
+    return
+  }
+
+  const title = editingTitle.value.trim()
+  if (!title) {
+    ElMessage.warning('标题不能为空')
+    return
+  }
+
+  isUpdatingTitle.value = true
+  try {
+    const response = await conversationApi.updateConversationTitle(conversationId.value, title)
+    conversation.value = response.data
+    isEditingTitle.value = false
+    editingTitle.value = ''
+    await loadConversationList()
+    ElMessage.success('标题已更新')
+  } catch (error) {
+    console.error('Failed to update conversation title:', error)
+    ElMessage.error('更新标题失败，请稍后重试')
+  } finally {
+    isUpdatingTitle.value = false
+  }
+}
+
+const sendMessageToNewConversation = async (content: string, clarificationQuestionId?: string) => {
   if (!conversationId.value) return
 
   isSending.value = true
@@ -690,7 +861,8 @@ const sendMessageToNewConversation = async (content: string) => {
       role: 'user',
       content,
       timestamp: new Date().toISOString(),
-      senderName: '用户'
+      senderName: '用户',
+      clarificationQuestionId
     }
 
     // 先显示用户消息
@@ -708,6 +880,7 @@ const sendMessageToNewConversation = async (content: string) => {
 
     // 如果阶段改变，重新加载对话以获取最新状态
     await loadNewConversation(conversationId.value)
+    await loadConversationList()
     
   } catch (error) {
     console.error('Failed to send message:', error)
@@ -715,6 +888,38 @@ const sendMessageToNewConversation = async (content: string) => {
   } finally {
     isSending.value = false
   }
+}
+
+const submitClarificationAnswer = async (answer: string) => {
+  const normalizedAnswer = answer.trim()
+  if (!normalizedAnswer || !conversationId.value || !conversation.value) {
+    return
+  }
+  if (isSending.value || isSubmittingClarification.value) {
+    return
+  }
+
+  const questionId = currentClarificationQuestion.value?.id
+  const question = currentClarificationQuestion.value?.question ?? ''
+  const messageContent = question
+    ? `澄清回答：${question}\n答案：${normalizedAnswer}`
+    : normalizedAnswer
+
+  isSubmittingClarification.value = true
+  try {
+    await sendMessageToNewConversation(messageContent, questionId)
+    clarificationCustomAnswer.value = ''
+  } finally {
+    isSubmittingClarification.value = false
+  }
+}
+
+const submitCustomClarificationAnswer = async () => {
+  const answer = clarificationCustomAnswer.value.trim()
+  if (!answer) {
+    return
+  }
+  await submitClarificationAnswer(answer)
 }
 
 const confirmUnderstanding = async (confirmed: boolean) => {
@@ -1035,8 +1240,38 @@ onUnmounted(() => {
   padding: 16px 20px;
   border-bottom: 1px solid #3a3a3a;
   display: flex;
-  justify-content: space-between;
   align-items: center;
+}
+
+.title-display-container {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.title-edit-container {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.title-edit-input {
+  flex: 1;
+}
+
+.title-edit-action {
+  flex-shrink: 0;
+}
+
+.title-edit-button {
+  flex-shrink: 0;
+  color: #909399;
+}
+
+.title-edit-button:hover {
+  color: #c0c4cc;
 }
 
 .project-title {
@@ -1044,6 +1279,11 @@ onUnmounted(() => {
   font-size: 16px;
   font-weight: 600;
   color: #ffffff;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .chat-history {
@@ -1358,6 +1598,7 @@ onUnmounted(() => {
 }
 
 /* 理解确认界面 */
+.clarifying-panel,
 .understanding-confirm-panel,
 .start-confirm-panel {
   padding: 16px 20px;
@@ -1399,6 +1640,47 @@ onUnmounted(() => {
 .confirm-actions {
   display: flex;
   gap: 12px;
+}
+
+.clarifying-question-card {
+  background-color: #2a2a2a;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.clarifying-question-text {
+  margin: 0 0 10px 0;
+  color: #e0e0e0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.clarifying-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.clarifying-option-button {
+  min-width: 120px;
+}
+
+.clarifying-custom-answer {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.clarifying-submit-button {
+  white-space: nowrap;
+}
+
+.clarifying-fallback-hint {
+  margin: 0 0 12px 0;
+  color: #aaa;
+  font-size: 13px;
 }
 
 /* 输入框 */

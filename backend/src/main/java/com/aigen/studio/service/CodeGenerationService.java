@@ -18,6 +18,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
@@ -36,6 +38,12 @@ public class CodeGenerationService {
 
     @Value("${iflow.sdk.output-dir:./output}")
     private String outputDir;
+
+    @Value("${iflow.sdk.code-heartbeat-interval-ms:30000}")
+    private long codeHeartbeatIntervalMillis = 30000L;
+
+    @Value("${iflow.sdk.code-heartbeat-initial-delay-ms:15000}")
+    private long codeHeartbeatInitialDelayMillis = 15000L;
 
     private final Set<Long> runningCodeGenerationConversations = ConcurrentHashMap.newKeySet();
 
@@ -64,10 +72,24 @@ public class CodeGenerationService {
                 String uiPrototypeHtml = uiPrototypeService.getUIPrototype(conversationId);
                 String irContent = generateIRContent(conversation, uiPrototypeHtml);
 
-                promptTaskService.generateCode(irContent, outputPath, message -> {
-                    log.info("Code generation log: {}", message);
-                    sendProgressMessage(conversationId, message, "system");
-                });
+                long generationStartAt = System.currentTimeMillis();
+                AtomicLong lastProgressAt = new AtomicLong(generationStartAt);
+                AtomicBoolean heartbeatRunning = new AtomicBoolean(true);
+                Thread heartbeatThread = startCodeHeartbeatThread(
+                        conversationId,
+                        heartbeatRunning,
+                        generationStartAt,
+                        lastProgressAt
+                );
+                try {
+                    promptTaskService.generateCode(irContent, outputPath, message -> {
+                        lastProgressAt.set(System.currentTimeMillis());
+                        log.info("Code generation log: {}", message);
+                        sendProgressMessage(conversationId, message, "system");
+                    });
+                } finally {
+                    stopCodeHeartbeatThread(heartbeatRunning, heartbeatThread);
+                }
 
                 backendGenerationFixer.fixGeneratedBackend(outputPath.resolve("backend"));
 
@@ -107,6 +129,75 @@ public class CodeGenerationService {
 
     public boolean isCodeGenerationInProgress(Long conversationId) {
         return conversationId != null && runningCodeGenerationConversations.contains(conversationId);
+    }
+
+    private Thread startCodeHeartbeatThread(
+            Long conversationId,
+            AtomicBoolean running,
+            long generationStartAt,
+            AtomicLong lastProgressAt
+    ) {
+        if (codeHeartbeatIntervalMillis <= 0) {
+            return null;
+        }
+
+        Thread heartbeatThread = new Thread(() -> {
+            sleepHeartbeat(codeHeartbeatInitialDelayMillis);
+            while (running.get() && !Thread.currentThread().isInterrupted()) {
+                long now = System.currentTimeMillis();
+                long lastProgress = lastProgressAt.get();
+                if (now - lastProgress >= codeHeartbeatIntervalMillis) {
+                    emitCodeHeartbeatMessage(conversationId, generationStartAt);
+                    lastProgressAt.set(now);
+                }
+                sleepHeartbeat(Math.max(100L, codeHeartbeatIntervalMillis / 2));
+            }
+        }, "code-heartbeat-" + conversationId);
+
+        heartbeatThread.setDaemon(true);
+        heartbeatThread.start();
+        return heartbeatThread;
+    }
+
+    private void stopCodeHeartbeatThread(AtomicBoolean running, Thread heartbeatThread) {
+        running.set(false);
+        if (heartbeatThread != null) {
+            heartbeatThread.interrupt();
+            try {
+                heartbeatThread.join(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private void emitCodeHeartbeatMessage(Long conversationId, long generationStartAt) {
+        try {
+            if (!isCodeGenerationInProgress(conversationId)) {
+                return;
+            }
+
+            Conversation conversation = conversationRepository.findById(conversationId).orElse(null);
+            if (conversation == null || conversation.getStage() != ConversationStage.CODE_GENERATING) {
+                return;
+            }
+
+            long elapsedSeconds = Math.max(1L, (System.currentTimeMillis() - generationStartAt) / 1000);
+            sendProgressMessage(conversationId, "代码生成中，已等待 " + elapsedSeconds + " 秒，请稍候...", "system");
+        } catch (Exception e) {
+            log.warn("Failed to emit code generation heartbeat for conversation: {}", conversationId, e);
+        }
+    }
+
+    private void sleepHeartbeat(long millis) {
+        if (millis <= 0) {
+            return;
+        }
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     void sendProgressMessage(Long conversationId, String content, String role) {

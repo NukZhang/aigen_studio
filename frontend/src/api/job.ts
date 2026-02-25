@@ -7,6 +7,7 @@ export interface Message {
   timestamp: string
   senderName: string
   senderAvatar?: string
+  clarificationQuestionId?: string
   toolCalls?: ToolCall[]
 }
 
@@ -31,6 +32,8 @@ export interface Conversation {
   serviceStatus?: string
   previewUrl?: string
   errorMessage?: string
+  currentQuestionIndex?: number | null
+  answeredQuestionIds?: string[]
   createdAt: string
   updatedAt: string
   messages: Message[]
@@ -94,6 +97,12 @@ export const conversationApi = {
 
   sendMessageToNewConversation: (conversationId: number, message: Message) => {
     return api.post<Message>(`/conversations/new/${conversationId}/messages`, message)
+  },
+
+  updateConversationTitle: (conversationId: number, projectName: string) => {
+    return api.patch<Conversation>(`/conversations/new/${conversationId}/title`, {
+      projectName
+    })
   },
 
   confirmUnderstanding: (conversationId: number, confirmed: boolean, feedback?: string) => {

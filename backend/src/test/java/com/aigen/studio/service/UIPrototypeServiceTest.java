@@ -2,7 +2,9 @@ package com.aigen.studio.service;
 
 import com.aigen.studio.entity.Conversation;
 import com.aigen.studio.entity.ConversationStage;
+import com.aigen.studio.entity.Message;
 import com.aigen.studio.repository.ConversationRepository;
+import com.aigen.studio.repository.MessageRepository;
 import com.aigen.studio.sdk.ICodingService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -14,6 +16,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -55,6 +58,9 @@ class UIPrototypeServiceTest {
 
     @Autowired
     private ConversationRepository conversationRepository;
+
+    @Autowired
+    private MessageRepository messageRepository;
 
     @BeforeEach
     void resetTracking() {
@@ -194,6 +200,86 @@ class UIPrototypeServiceTest {
     }
 
     @Test
+    void generateUIPrototypeLoadsHtmlFromNonIndexFileWhenAssistantEmpty() {
+        Conversation conversation = new Conversation();
+        conversation.setProjectName("Test Project");
+        conversation.setUserRequirement("Generate a UI prototype");
+        conversation.setAiUnderstanding("Understood requirements");
+        conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+        conversation.setStage(ConversationStage.UNDERSTANDING_CONFIRMED);
+        conversation = conversationRepository.save(conversation);
+
+        String html = "<html><body>Non Index UI</body></html>";
+        CountDownLatch completed = new CountDownLatch(1);
+        Long conversationId = conversation.getId();
+        handlerHook.set(handler -> {
+            try {
+                Path htmlFile = outputDir
+                        .resolve("conversation-" + conversationId)
+                        .resolve("ui-prototype")
+                        .resolve("new-year-ranking.html");
+                Files.createDirectories(htmlFile.getParent());
+                Files.writeString(htmlFile, html);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+            handler.onComplete();
+            completed.countDown();
+        });
+
+        uiPrototypeService.generateUIPrototype(conversationId);
+
+        assertTrue(awaitLatch(completed));
+
+        Conversation updated = waitForStage(conversationId, ConversationStage.UI_READY, 2);
+        assertEquals("UI_READY", updated.getStage().name());
+        assertNotNull(updated.getUiPrototypeContent());
+        assertTrue(updated.getUiPrototypeContent().contains(html));
+        assertTrue(updated.getUiPrototypeContent().contains("pencil-ui-design"));
+    }
+
+    @Test
+    void generateUIPrototypeSendsHeartbeatWhileWaitingForModelResponse() {
+        ReflectionTestUtils.setField(uiPrototypeService, "uiHeartbeatIntervalMillis", 50L);
+        ReflectionTestUtils.setField(uiPrototypeService, "uiHeartbeatInitialDelayMillis", 10L);
+
+        Conversation conversation = new Conversation();
+        conversation.setProjectName("Heartbeat Project");
+        conversation.setUserRequirement("Generate a UI prototype");
+        conversation.setAiUnderstanding("Understood requirements");
+        conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+        conversation.setStage(ConversationStage.UNDERSTANDING_CONFIRMED);
+        conversation = conversationRepository.save(conversation);
+
+        CountDownLatch completed = new CountDownLatch(1);
+        handlerHook.set(handler -> {
+            try {
+                Thread.sleep(180);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            handler.onAssistantMessage("<html><body>Heartbeat OK</body></html>");
+            handler.onComplete();
+            completed.countDown();
+        });
+
+        uiPrototypeService.generateUIPrototype(conversation.getId());
+
+        assertTrue(awaitLatch(completed));
+        Conversation updated = waitForStage(conversation.getId(), ConversationStage.UI_READY, 2);
+        assertEquals(ConversationStage.UI_READY, updated.getStage());
+
+        List<Message> systemMessages = messageRepository.findByConversationIdAndRoleOrderByCreatedAtAsc(
+                conversation.getId(),
+                Message.MessageRole.SYSTEM
+        );
+        assertTrue(
+                systemMessages.stream().anyMatch(msg -> msg.getContent() != null && msg.getContent().contains("UI 原型生成中")),
+                "Should emit heartbeat system message while waiting for model response"
+        );
+    }
+
+    @Test
     void generateUIPrototypeRewritesEmptyExistingHtmlFileOnSuccess() {
         Conversation conversation = new Conversation();
         conversation.setProjectName("Test Project");
@@ -330,7 +416,7 @@ class UIPrototypeServiceTest {
     }
 
     @Test
-    void generateUIPrototypeRetriesAfterFirstResponseTimeoutWithoutMessages() {
+    void generateUIPrototypeDoesNotRetryAfterFirstResponseTimeout() {
         Conversation conversation = new Conversation();
         conversation.setProjectName("Test Project");
         conversation.setUserRequirement("Generate a UI prototype");
@@ -341,68 +427,23 @@ class UIPrototypeServiceTest {
 
         AtomicInteger attemptCounter = new AtomicInteger(0);
         handlerHook.set(handler -> {
-            int attempt = attemptCounter.incrementAndGet();
-            if (attempt == 1) {
-                handler.onError(new java.util.concurrent.TimeoutException(
-                        "Did not observe any item or terminal signal within first signal from a Publisher in 'peek'"));
-                handler.onComplete();
-                return;
-            }
-            handler.onAssistantMessage("<html><body>Retry OK</body></html>");
+            attemptCounter.incrementAndGet();
+            handler.onError(new java.util.concurrent.TimeoutException(
+                    "Did not observe any item or terminal signal within first signal from a Publisher in 'peek'"));
             handler.onComplete();
         });
 
         uiPrototypeService.generateUIPrototype(conversation.getId());
 
-        Conversation updated = waitForStage(conversation.getId(), ConversationStage.UI_READY, 3);
-        assertEquals(ConversationStage.UI_READY, updated.getStage());
-        assertTrue(updated.getUiPrototypeContent() != null && updated.getUiPrototypeContent().contains("Retry OK"));
-        assertEquals(2, attemptCounter.get(), "Should retry once after first-response timeout");
-        assertEquals(2, receivedPrompts.size(), "Should invoke coding service twice");
-    }
-
-    @Test
-    void generateUIPrototypeFallsBackToLegacyPromptAfterTwoFirstResponseTimeouts() {
-        Conversation conversation = new Conversation();
-        conversation.setProjectName("Test Project");
-        conversation.setUserRequirement("Generate a UI prototype");
-        conversation.setAiUnderstanding("Understood requirements");
-        conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
-        conversation.setStage(ConversationStage.UNDERSTANDING_CONFIRMED);
-        conversation = conversationRepository.save(conversation);
-
-        AtomicInteger attemptCounter = new AtomicInteger(0);
-        handlerHook.set(handler -> {
-            int attempt = attemptCounter.incrementAndGet();
-            if (attempt <= 2) {
-                handler.onError(new java.util.concurrent.TimeoutException(
-                        "Did not observe any item or terminal signal within first signal from a Publisher in 'peek'"));
-                handler.onComplete();
-                return;
-            }
-            handler.onAssistantMessage("<html><body>Legacy Fallback OK</body></html>");
-            handler.onComplete();
-        });
-
-        uiPrototypeService.generateUIPrototype(conversation.getId());
-
-        Conversation updated = waitForStage(conversation.getId(), ConversationStage.UI_READY, 4);
-        assertEquals(ConversationStage.UI_READY, updated.getStage());
-        assertTrue(updated.getUiPrototypeContent() != null && updated.getUiPrototypeContent().contains("Legacy Fallback OK"));
-        assertEquals(3, attemptCounter.get(), "Should use legacy fallback after compact retry timeout");
-        assertEquals(3, receivedPrompts.size(), "Should invoke coding service three times");
+        Conversation updated = waitForStage(conversation.getId(), ConversationStage.FAILED, 3);
+        assertEquals(ConversationStage.FAILED, updated.getStage());
+        assertTrue(updated.getErrorMessage() != null && updated.getErrorMessage().contains("Did not observe any item"));
+        assertEquals(1, attemptCounter.get(), "Should not retry after first-response timeout");
+        assertEquals(1, receivedPrompts.size(), "Should invoke coding service once");
         assertTrue(receivedPrompts.get(0).contains("模板模式：PRIMARY"),
-                "First attempt should use primary prompt section");
-        assertTrue(receivedPrompts.get(1).contains("模板模式：COMPACT"),
-                "Second attempt should use compact retry prompt section");
-        assertTrue(receivedPrompts.get(2).contains("模板模式：LEGACY"),
-                "Third attempt should use legacy fallback prompt section");
+                "Attempt should use primary prompt section");
         assertTrue(receivedPrompts.get(0).contains("images.unsplash.com"),
                 "Primary prompt should include Unsplash placeholder rule");
-        assertTrue(receivedPrompts.get(1).contains("images.unsplash.com"),
-                "Compact retry prompt should include Unsplash placeholder rule");
-        assertTrue(receivedPrompts.get(2).contains("images.unsplash.com"),
-                "Legacy fallback prompt should include Unsplash placeholder rule");
     }
 
     @Test

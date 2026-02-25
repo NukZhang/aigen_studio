@@ -2,7 +2,9 @@ package com.aigen.studio.service;
 
 import com.aigen.studio.entity.Conversation;
 import com.aigen.studio.entity.ConversationStage;
+import com.aigen.studio.entity.Message;
 import com.aigen.studio.repository.ConversationRepository;
+import com.aigen.studio.repository.MessageRepository;
 import com.aigen.studio.sdk.ICodingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,9 +20,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.util.Comparator;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Stream;
 
 /**
  * UI 原型生成服务
@@ -31,12 +36,10 @@ import java.util.concurrent.Executor;
 @RequiredArgsConstructor
 public class UIPrototypeService {
 
-    private static final String FIRST_RESPONSE_TIMEOUT_HINT = "phase=first_response_timeout";
     private static final String TEMPLATE_SECTION_PRIMARY = "PRIMARY";
-    private static final String TEMPLATE_SECTION_COMPACT = "COMPACT";
-    private static final String TEMPLATE_SECTION_LEGACY = "LEGACY";
 
     private final ConversationRepository conversationRepository;
+    private final MessageRepository messageRepository;
     private final FileService fileService;
     private final ICodingService codingService;
     private final ResourceLoader resourceLoader;
@@ -48,6 +51,15 @@ public class UIPrototypeService {
 
     @Value("${aigen.prompt.ui-prototype-template:classpath:prompt-templates/ui-prototype-prompt.md}")
     private String uiPromptTemplateLocation;
+
+    @Value("${iflow.sdk.ui-task-timeout-ms:300000}")
+    private long uiTaskTimeoutMillis = 300000L;
+
+    @Value("${iflow.sdk.ui-heartbeat-interval-ms:30000}")
+    private long uiHeartbeatIntervalMillis = 30000L;
+
+    @Value("${iflow.sdk.ui-heartbeat-initial-delay-ms:15000}")
+    private long uiHeartbeatInitialDelayMillis = 15000L;
 
     private final Set<Long> runningUiGenerationConversations = ConcurrentHashMap.newKeySet();
 
@@ -71,27 +83,6 @@ public class UIPrototypeService {
             log.info("UI prompt diagnostics for conversation {}: {}", conversationId, buildPromptDiagnostics(prompt));
 
             UiGenerationAttemptResult attempt = executeUiGenerationAttempt(conversationId, prompt, "primary");
-            if (shouldRetryWithCompactPrompt(attempt)) {
-                String compactPrompt = buildCompactRetryPrompt(conversation);
-                log.warn(
-                        "UI primary attempt timed out before first response for conversation {}, retrying with compatibility prompt. primaryError={}",
-                        conversationId,
-                        safeErrorMessage(attempt.error)
-                );
-                log.info("UI compact prompt diagnostics for conversation {}: {}", conversationId, buildPromptDiagnostics(compactPrompt));
-                attempt = executeUiGenerationAttempt(conversationId, compactPrompt, "compact-retry");
-
-                if (shouldRetryWithCompactPrompt(attempt)) {
-                    String legacyPrompt = buildLegacyFallbackPrompt(conversation);
-                    log.warn(
-                            "UI compatibility attempt timed out before first response for conversation {}, retrying with legacy fallback prompt. compatibilityError={}",
-                            conversationId,
-                            safeErrorMessage(attempt.error)
-                    );
-                    log.info("UI legacy prompt diagnostics for conversation {}: {}", conversationId, buildPromptDiagnostics(legacyPrompt));
-                    attempt = executeUiGenerationAttempt(conversationId, legacyPrompt, "legacy-fallback");
-                }
-            }
 
             if (attempt.resolvedHtml != null) {
                 persistUiPrototypeSuccess(conversationId, attempt);
@@ -215,14 +206,6 @@ public class UIPrototypeService {
         return renderPromptFromTemplate(TEMPLATE_SECTION_PRIMARY, conversation);
     }
 
-    private String buildCompactRetryPrompt(Conversation conversation) {
-        return renderPromptFromTemplate(TEMPLATE_SECTION_COMPACT, conversation);
-    }
-
-    private String buildLegacyFallbackPrompt(Conversation conversation) {
-        return renderPromptFromTemplate(TEMPLATE_SECTION_LEGACY, conversation);
-    }
-
     private String renderPromptFromTemplate(String section, Conversation conversation) {
         String sectionTemplate = resolvePromptTemplateSection(section);
         return sectionTemplate
@@ -292,6 +275,9 @@ public class UIPrototypeService {
         }
 
         StringBuilder htmlContent = new StringBuilder();
+        long attemptStartAt = System.currentTimeMillis();
+        AtomicBoolean heartbeatRunning = new AtomicBoolean(true);
+        Thread heartbeatThread = startUiHeartbeatThread(conversationId, attemptLabel, heartbeatRunning, attemptStartAt);
         try {
             codingService.executeTask(prompt, workDir, new ICodingService.MessageHandler() {
                 @Override
@@ -319,36 +305,88 @@ public class UIPrototypeService {
                 @Override
                 public void onError(Throwable error) {
                     result.error = error;
-                    result.firstResponseTimeout = isFirstResponseTimeout(error);
                 }
 
                 @Override
                 public void onComplete() {
                     result.resolvedHtml = resolveHtmlContent(conversationId, htmlContent.toString());
                 }
-            });
+            }, uiTaskTimeoutMillis);
         } catch (Exception e) {
             result.error = e;
-            result.firstResponseTimeout = isFirstResponseTimeout(e);
+        } finally {
+            stopUiHeartbeatThread(heartbeatRunning, heartbeatThread);
         }
         return result;
     }
 
-    private boolean shouldRetryWithCompactPrompt(UiGenerationAttemptResult result) {
-        return result != null
-                && result.resolvedHtml == null
-                && result.firstResponseTimeout
-                && result.assistantChunkCount == 0;
+    private Thread startUiHeartbeatThread(
+            Long conversationId,
+            String attemptLabel,
+            AtomicBoolean running,
+            long attemptStartAt
+    ) {
+        if (uiHeartbeatIntervalMillis <= 0) {
+            return null;
+        }
+
+        Thread heartbeatThread = new Thread(() -> {
+            sleepHeartbeat(uiHeartbeatInitialDelayMillis);
+            while (running.get() && !Thread.currentThread().isInterrupted()) {
+                emitUiHeartbeatMessage(conversationId, attemptLabel, attemptStartAt);
+                sleepHeartbeat(uiHeartbeatIntervalMillis);
+            }
+        }, "ui-heartbeat-" + conversationId + "-" + attemptLabel);
+
+        heartbeatThread.setDaemon(true);
+        heartbeatThread.start();
+        return heartbeatThread;
     }
 
-    private boolean isFirstResponseTimeout(Throwable error) {
-        if (error == null || error.getMessage() == null) {
-            return false;
+    private void stopUiHeartbeatThread(AtomicBoolean running, Thread heartbeatThread) {
+        running.set(false);
+        if (heartbeatThread != null) {
+            heartbeatThread.interrupt();
+            try {
+                heartbeatThread.join(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         }
-        String lowerCase = error.getMessage().toLowerCase();
-        return lowerCase.contains(FIRST_RESPONSE_TIMEOUT_HINT)
-                || (lowerCase.contains("first signal from a publisher")
-                && !lowerCase.contains("phase=inactivity_timeout_after_messages"));
+    }
+
+    private void emitUiHeartbeatMessage(Long conversationId, String attemptLabel, long attemptStartAt) {
+        try {
+            if (!isUiGenerationInProgress(conversationId)) {
+                return;
+            }
+
+            Conversation conversation = conversationRepository.findById(conversationId).orElse(null);
+            if (conversation == null || conversation.getStage() != ConversationStage.UI_GENERATING) {
+                return;
+            }
+
+            long elapsedSeconds = Math.max(1L, (System.currentTimeMillis() - attemptStartAt) / 1000);
+            Message message = new Message();
+            message.setConversationId(conversationId);
+            message.setRole(Message.MessageRole.SYSTEM);
+            message.setSenderName("系统");
+            message.setContent("UI 原型生成中（" + attemptLabel + "），已等待 " + elapsedSeconds + " 秒，请稍候...");
+            messageRepository.save(message);
+        } catch (Exception e) {
+            log.warn("Failed to emit UI heartbeat message for conversation: {}", conversationId, e);
+        }
+    }
+
+    private void sleepHeartbeat(long millis) {
+        if (millis <= 0) {
+            return;
+        }
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private void persistUiPrototypeSuccess(Long conversationId, UiGenerationAttemptResult attempt) {
@@ -401,19 +439,58 @@ public class UIPrototypeService {
             return resolvedHtml;
         }
 
-        Path htmlFile = getUIPrototypeDir(conversationId).resolve("index.html");
+        Path uiPrototypeDir = getUIPrototypeDir(conversationId);
+        Path htmlFile = uiPrototypeDir.resolve("index.html");
+        resolvedHtml = resolveHtmlFromFile(conversationId, htmlFile);
+        if (resolvedHtml != null) {
+            return resolvedHtml;
+        }
+
         try {
-            if (Files.exists(htmlFile)) {
-                String fileContent = Files.readString(htmlFile);
-                resolvedHtml = extractHtml(fileContent);
-                if (resolvedHtml != null) {
-                    log.info("Loaded UI prototype HTML from file for conversation: {}", conversationId);
+            if (Files.isDirectory(uiPrototypeDir)) {
+                try (Stream<Path> fileStream = Files.list(uiPrototypeDir)) {
+                    for (Path candidate : fileStream
+                            .filter(Files::isRegularFile)
+                            .filter(path -> path.getFileName().toString().toLowerCase().endsWith(".html"))
+                            .filter(path -> !path.getFileName().toString().equalsIgnoreCase("index.html"))
+                            .sorted(Comparator.comparing(this::safeLastModifiedTime).reversed())
+                            .toList()) {
+                        resolvedHtml = resolveHtmlFromFile(conversationId, candidate);
+                        if (resolvedHtml != null) {
+                            return resolvedHtml;
+                        }
+                    }
                 }
             }
         } catch (Exception e) {
-            log.warn("Failed to read UI prototype file for conversation: {}", conversationId, e);
+            log.warn("Failed to scan UI prototype directory for conversation: {}", conversationId, e);
         }
         return resolvedHtml;
+    }
+
+    private String resolveHtmlFromFile(Long conversationId, Path htmlFile) {
+        try {
+            if (!Files.exists(htmlFile) || Files.isDirectory(htmlFile)) {
+                return null;
+            }
+            String fileContent = Files.readString(htmlFile);
+            String resolvedHtml = extractHtml(fileContent);
+            if (resolvedHtml != null) {
+                log.info("Loaded UI prototype HTML from file for conversation {}: {}", conversationId, htmlFile.getFileName());
+            }
+            return resolvedHtml;
+        } catch (Exception e) {
+            log.warn("Failed to read UI prototype file for conversation {}: {}", conversationId, htmlFile, e);
+            return null;
+        }
+    }
+
+    private long safeLastModifiedTime(Path path) {
+        try {
+            return Files.getLastModifiedTime(path).toMillis();
+        } catch (Exception e) {
+            return Long.MIN_VALUE;
+        }
     }
 
     private String safeErrorMessage(Throwable error) {
@@ -484,7 +561,6 @@ public class UIPrototypeService {
     private static class UiGenerationAttemptResult {
         private String resolvedHtml;
         private Throwable error;
-        private boolean firstResponseTimeout;
         private int assistantChunkCount;
         private int assistantCharCount;
     }

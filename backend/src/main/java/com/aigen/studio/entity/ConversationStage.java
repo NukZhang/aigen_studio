@@ -15,6 +15,11 @@ public enum ConversationStage {
     UNDERSTANDING,
 
     /**
+     * 需求澄清阶段（信息不足，等待用户补充）
+     */
+    CLARIFYING,
+
+    /**
      * 需求理解确认阶段（等待用户确认，内部状态，显示在"理解需求"步骤）
      */
     UNDERSTANDING_CONFIRMED,

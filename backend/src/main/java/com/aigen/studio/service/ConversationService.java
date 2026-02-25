@@ -1,5 +1,7 @@
 package com.aigen.studio.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.aigen.studio.dto.*;
 import com.aigen.studio.entity.*;
 import com.aigen.studio.repository.ConversationRepository;
@@ -10,7 +12,12 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 对话服务
@@ -21,11 +28,32 @@ import java.util.List;
 @RequiredArgsConstructor
 public class ConversationService {
 
+    private static final String DEFAULT_CONVERSATION_TITLE = "新对话";
+    private static final int AUTO_TITLE_MAX_LENGTH = 18;
+    private static final int MANUAL_TITLE_MAX_LENGTH = 50;
+    private static final String AUTO_TITLE_ELLIPSIS = "…";
+    private static final String REQUIREMENT_GATE_START = "<REQUIREMENT_GATE>";
+    private static final String REQUIREMENT_GATE_END = "</REQUIREMENT_GATE>";
+    private static final Pattern CLARIFICATION_PAYLOAD_PATTERN = Pattern.compile(
+            "(?is)<CLARIFICATION_PAYLOAD>\\s*(.*?)\\s*</CLARIFICATION_PAYLOAD>"
+    );
+    private static final Pattern ANSWERED_QUESTION_PATTERN = Pattern.compile(
+            "(?m)^\\s*澄清回答\\s*[：:]\\s*(.+?)\\s*$"
+    );
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final List<String> TITLE_PREFIXES = List.of(
+            "我想做一个", "我想做", "我想要一个", "我想要", "我要做一个", "我要做",
+            "请帮我做一个", "请帮我", "帮我做一个", "帮我", "需要一个", "需要",
+            "开发一个", "实现一个", "创建一个", "做一个"
+    );
+
     private final ConversationRepository conversationRepository;
     private final MessageRepository messageRepository;
     private final PromptTaskService promptTaskService;
     private final CodeGenerationService codeGenerationService;
     private final UIPrototypeService uiPrototypeService;
+
+    private record ClarificationQuestionMeta(String id, String question) {}
 
     // ==================== 独立对话流程方法 ====================
 
@@ -37,7 +65,7 @@ public class ConversationService {
 
         // 创建空对话，项目名称和需求将在后续交互中由 AI 理解后写入
         Conversation conversation = new Conversation();
-        conversation.setProjectName("新对话");
+        conversation.setProjectName(DEFAULT_CONVERSATION_TITLE);
         conversation.setUserRequirement(null);
         conversation.setCreatedBy(createdBy);
         conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
@@ -103,6 +131,26 @@ public class ConversationService {
         return convertToDTO(conversation);
     }
 
+    /**
+     * 手动更新对话标题
+     */
+    public ConversationDTO updateConversationTitle(Long conversationId, String projectName) {
+        Conversation conversation = conversationRepository.findById(conversationId)
+                .orElseThrow(() -> new RuntimeException("Conversation not found: " + conversationId));
+
+        String normalizedTitle = safeText(projectName);
+        if (normalizedTitle.isBlank()) {
+            throw new RuntimeException("Conversation title cannot be blank");
+        }
+        if (normalizedTitle.length() > MANUAL_TITLE_MAX_LENGTH) {
+            throw new RuntimeException("Conversation title cannot exceed 50 characters");
+        }
+
+        conversation.setProjectName(normalizedTitle);
+        conversation = conversationRepository.save(conversation);
+        return convertToDTO(conversation);
+    }
+
 
     /**
      * 发送消息到独立对话
@@ -119,6 +167,7 @@ public class ConversationService {
         userMessage.setRole(Message.MessageRole.USER);
         userMessage.setSenderName("用户");
         userMessage.setContent(message.getContent());
+        userMessage.setClarificationQuestionId(safeText(message.getClarificationQuestionId()));
         messageRepository.save(userMessage);
 
         // 根据当前阶段处理消息
@@ -164,6 +213,11 @@ public class ConversationService {
 
             case UNDERSTANDING:
                 // 理解阶段，用户可以补充需求
+                handleUnderstanding(conversation, message, response);
+                break;
+
+            case CLARIFYING:
+                // 澄清阶段，用户可以补充关键信息
                 handleUnderstanding(conversation, message, response);
                 break;
 
@@ -217,7 +271,7 @@ public class ConversationService {
      */
     private void handleNeedInput(Conversation conversation, MessageDTO message, MessageDTO response) {
         // 保存用户需求
-        conversation.setUserRequirement(message.getContent());
+        conversation.setUserRequirement(safeText(message.getContent()));
         conversation.setStage(ConversationStage.UNDERSTANDING);
         conversationRepository.save(conversation);
 
@@ -226,13 +280,18 @@ public class ConversationService {
             log.info("Understanding requirement for conversation: {}", conversation.getId());
             String aiUnderstanding = promptTaskService.understandRequirement(conversation.getUserRequirement());
             conversation.setAiUnderstanding(aiUnderstanding);
-            conversation.setStage(ConversationStage.UNDERSTANDING_CONFIRMED);
+            ConversationStage nextStage = resolveUnderstandingStage(aiUnderstanding);
+            conversation.setStage(nextStage);
+            updateProjectNameAfterUnderstanding(conversation, conversation.getUserRequirement());
             conversationRepository.save(conversation);
 
-            response.setContent("我已收到您的需求：" + message.getContent() + "\n\n" +
-                    "让我理解一下您的需求：\n\n" +
-                    conversation.getAiUnderstanding() + "\n\n" +
-                    "请问这个理解是否正确？如果需要修改，请告诉我。");
+            response.setContent(buildUnderstandingResponse(
+                    "我已收到您的需求：" + message.getContent() + "\n\n" +
+                            "让我理解一下您的需求：",
+                    conversation.getAiUnderstanding(),
+                    nextStage,
+                    "请问这个理解是否正确？如果需要修改，请告诉我。"
+            ));
         } catch (Exception e) {
             log.error("Failed to understand requirement", e);
             conversation.setStage(ConversationStage.UNDERSTANDING);
@@ -249,7 +308,11 @@ public class ConversationService {
      */
     private void handleUnderstanding(Conversation conversation, MessageDTO message, MessageDTO response) {
         // 用户在补充需求
-        String updatedRequirement = conversation.getUserRequirement() + "\n" + message.getContent();
+        String currentRequirement = safeText(conversation.getUserRequirement());
+        String requirementDelta = safeText(message.getContent());
+        String updatedRequirement = currentRequirement.isBlank()
+                ? requirementDelta
+                : currentRequirement + "\n" + requirementDelta;
         conversation.setUserRequirement(updatedRequirement);
 
         try {
@@ -257,12 +320,17 @@ public class ConversationService {
             log.info("Re-understanding requirement for conversation: {}", conversation.getId());
             String aiUnderstanding = promptTaskService.understandRequirement(updatedRequirement);
             conversation.setAiUnderstanding(aiUnderstanding);
-            conversation.setStage(ConversationStage.UNDERSTANDING_CONFIRMED);
+            ConversationStage nextStage = resolveUnderstandingStage(aiUnderstanding);
+            conversation.setStage(nextStage);
+            updateProjectNameAfterUnderstanding(conversation, updatedRequirement);
             conversationRepository.save(conversation);
 
-            response.setContent("我已更新您的需求，让我重新理解：\n\n" +
-                    conversation.getAiUnderstanding() + "\n\n" +
-                    "请问这个理解是否正确？如果需要修改，请告诉我。");
+            response.setContent(buildUnderstandingResponse(
+                    "我已更新您的需求，让我重新理解：",
+                    conversation.getAiUnderstanding(),
+                    nextStage,
+                    "请问这个理解是否正确？如果需要修改，请告诉我。"
+            ));
         } catch (Exception e) {
             log.error("Failed to re-understand requirement", e);
             conversation.setErrorMessage("重新理解需求失败: " + e.getMessage());
@@ -451,16 +519,21 @@ public class ConversationService {
         try {
             String aiUnderstanding = promptTaskService.understandRequirement(requirement);
             conversation.setAiUnderstanding(aiUnderstanding);
-            conversation.setStage(ConversationStage.UNDERSTANDING_CONFIRMED);
+            ConversationStage nextStage = resolveUnderstandingStage(aiUnderstanding);
+            conversation.setStage(nextStage);
             conversation.setUnderstandingConfirmed(false);
             conversation.setUiConfirmed(false);
             conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
             conversation.setErrorMessage(null);
+            updateProjectNameAfterUnderstanding(conversation, requirement);
             conversationRepository.save(conversation);
 
-            response.setContent("我已根据最新需求重新理解：\n\n" +
-                    aiUnderstanding + "\n\n" +
-                    "请问这个理解是否正确？如果需要修改，请继续告诉我。");
+            response.setContent(buildUnderstandingResponse(
+                    "我已根据最新需求重新理解：",
+                    aiUnderstanding,
+                    nextStage,
+                    "请问这个理解是否正确？如果需要修改，请继续告诉我。"
+            ));
         } catch (Exception e) {
             log.error("Failed to re-understand requirement in cross-stage command", e);
             conversation.setErrorMessage("重新理解需求失败: " + e.getMessage());
@@ -561,6 +634,51 @@ public class ConversationService {
                 || normalized.contains("删除");
     }
 
+    private ConversationStage resolveUnderstandingStage(String aiUnderstanding) {
+        String nextAction = extractRequirementGateValue(aiUnderstanding, "NEXT_ACTION");
+        if ("ASK_CLARIFICATION".equalsIgnoreCase(nextAction)) {
+            return ConversationStage.CLARIFYING;
+        }
+        return ConversationStage.UNDERSTANDING_CONFIRMED;
+    }
+
+    private String extractRequirementGateValue(String aiUnderstanding, String key) {
+        String content = safeText(aiUnderstanding);
+        if (content.isBlank()) {
+            return "";
+        }
+
+        int gateStart = content.indexOf(REQUIREMENT_GATE_START);
+        int gateEnd = content.indexOf(REQUIREMENT_GATE_END);
+        if (gateStart < 0 || gateEnd <= gateStart) {
+            return "";
+        }
+
+        String gateSection = content.substring(gateStart + REQUIREMENT_GATE_START.length(), gateEnd).trim();
+        String[] lines = gateSection.split("\\R");
+        String prefix = key + ":";
+        for (String line : lines) {
+            String trimmed = safeText(line);
+            if (trimmed.startsWith(prefix)) {
+                return safeText(trimmed.substring(prefix.length()));
+            }
+        }
+        return "";
+    }
+
+    private String buildUnderstandingResponse(String intro, String aiUnderstanding, ConversationStage stage, String confirmHint) {
+        if (stage == ConversationStage.CLARIFYING) {
+            return intro + "\n\n" +
+                    "我还需要确认几个关键信息：\n\n" +
+                    aiUnderstanding + "\n\n" +
+                    "请按编号逐条补充，我会继续完善理解。";
+        }
+
+        return intro + "\n\n" +
+                aiUnderstanding + "\n\n" +
+                confirmHint;
+    }
+
     private String extractCommandPayload(String content) {
         int separatorIndex = content.indexOf('：');
         if (separatorIndex < 0) {
@@ -578,6 +696,187 @@ public class ConversationService {
 
     private String safeText(String text) {
         return text == null ? "" : text.trim();
+    }
+
+    private void updateProjectNameAfterUnderstanding(Conversation conversation, String requirement) {
+        String currentTitle = safeText(conversation.getProjectName());
+        if (!currentTitle.isBlank() && !DEFAULT_CONVERSATION_TITLE.equals(currentTitle)) {
+            return;
+        }
+
+        String generatedTitle = generateShortProjectName(requirement);
+        if (!generatedTitle.isBlank()) {
+            conversation.setProjectName(generatedTitle);
+        }
+    }
+
+    private String generateShortProjectName(String requirement) {
+        String normalizedRequirement = safeText(requirement).replaceAll("\\s+", " ");
+        if (normalizedRequirement.isBlank()) {
+            return "";
+        }
+
+        String candidate = truncateByDelimiter(normalizedRequirement);
+        for (String prefix : TITLE_PREFIXES) {
+            if (candidate.startsWith(prefix)) {
+                candidate = safeText(candidate.substring(prefix.length()));
+                break;
+            }
+        }
+
+        if (candidate.isBlank()) {
+            candidate = truncateByDelimiter(normalizedRequirement);
+        }
+
+        if (candidate.length() > AUTO_TITLE_MAX_LENGTH) {
+            candidate = safeText(candidate.substring(0, AUTO_TITLE_MAX_LENGTH)) + AUTO_TITLE_ELLIPSIS;
+        }
+
+        return candidate;
+    }
+
+    private String truncateByDelimiter(String text) {
+        int delimiterIndex = findFirstDelimiterIndex(text);
+        if (delimiterIndex > 0) {
+            return safeText(text.substring(0, delimiterIndex));
+        }
+        return safeText(text);
+    }
+
+    private int findFirstDelimiterIndex(String text) {
+        int index = -1;
+        char[] delimiters = {'，', ',', '。', '！', '!', '？', '?', '：', ':', '；', ';', '\n', '\r'};
+        for (char delimiter : delimiters) {
+            int current = text.indexOf(delimiter);
+            if (current >= 0 && (index == -1 || current < index)) {
+                index = current;
+            }
+        }
+        return index;
+    }
+
+    private List<ClarificationQuestionMeta> extractClarificationQuestions(String aiUnderstanding) {
+        String source = safeText(aiUnderstanding);
+        if (source.isBlank()) {
+            return List.of();
+        }
+
+        Matcher matcher = CLARIFICATION_PAYLOAD_PATTERN.matcher(source);
+        if (!matcher.find()) {
+            return List.of();
+        }
+
+        String payload = safeText(matcher.group(1));
+        if (payload.isBlank()) {
+            return List.of();
+        }
+
+        try {
+            JsonNode root = OBJECT_MAPPER.readTree(payload);
+            JsonNode questionsNode = root.path("questions");
+            if (!questionsNode.isArray()) {
+                return List.of();
+            }
+
+            List<ClarificationQuestionMeta> questions = new ArrayList<>();
+            for (int i = 0; i < questionsNode.size(); i++) {
+                JsonNode item = questionsNode.get(i);
+                String question = safeText(item.path("question").asText(""));
+                if (question.isBlank()) {
+                    continue;
+                }
+                String id = safeText(item.path("id").asText(""));
+                if (id.isBlank()) {
+                    id = "q" + (i + 1);
+                }
+                questions.add(new ClarificationQuestionMeta(id, question));
+            }
+            return questions;
+        } catch (Exception e) {
+            log.warn("Failed to parse clarification payload, ignore progress extraction", e);
+            return List.of();
+        }
+    }
+
+    private List<String> resolveAnsweredQuestionIds(List<Message> messages, List<ClarificationQuestionMeta> clarificationQuestions) {
+        if (clarificationQuestions.isEmpty() || messages.isEmpty()) {
+            return List.of();
+        }
+
+        Map<String, String> questionIdByText = clarificationQuestions.stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        question -> normalizeQuestionForMatch(question.question()),
+                        ClarificationQuestionMeta::id,
+                        (left, right) -> left
+                ));
+
+        Set<String> answeredQuestionIds = new LinkedHashSet<>();
+        for (Message message : messages) {
+            if (message.getRole() != Message.MessageRole.USER) {
+                continue;
+            }
+
+            String questionIdFromMessage = safeText(message.getClarificationQuestionId());
+            if (!questionIdFromMessage.isBlank()) {
+                for (ClarificationQuestionMeta clarificationQuestion : clarificationQuestions) {
+                    if (clarificationQuestion.id().equals(questionIdFromMessage)) {
+                        answeredQuestionIds.add(questionIdFromMessage);
+                        break;
+                    }
+                }
+                continue;
+            }
+
+            String answeredQuestionText = extractAnsweredQuestionText(message.getContent());
+            if (answeredQuestionText.isBlank()) {
+                continue;
+            }
+
+            String resolvedQuestionId = questionIdByText.get(normalizeQuestionForMatch(answeredQuestionText));
+            if (resolvedQuestionId != null) {
+                answeredQuestionIds.add(resolvedQuestionId);
+            }
+        }
+
+        return List.copyOf(answeredQuestionIds);
+    }
+
+    private String extractAnsweredQuestionText(String messageContent) {
+        String content = safeText(messageContent);
+        if (content.isBlank()) {
+            return "";
+        }
+
+        Matcher matcher = ANSWERED_QUESTION_PATTERN.matcher(content);
+        if (!matcher.find()) {
+            return "";
+        }
+
+        return safeText(matcher.group(1));
+    }
+
+    private String normalizeQuestionForMatch(String question) {
+        String normalized = safeText(question)
+                .replace("？", "?")
+                .replace("：", ":")
+                .toLowerCase()
+                .replaceAll("^\\d+[\\.、\\)]\\s*", "")
+                .replaceAll("\\s+", "");
+        return safeText(normalized);
+    }
+
+    private Integer resolveCurrentQuestionIndex(List<ClarificationQuestionMeta> clarificationQuestions, List<String> answeredQuestionIds) {
+        if (clarificationQuestions.isEmpty()) {
+            return null;
+        }
+
+        Set<String> answeredSet = Set.copyOf(answeredQuestionIds);
+        for (int i = 0; i < clarificationQuestions.size(); i++) {
+            if (!answeredSet.contains(clarificationQuestions.get(i).id())) {
+                return i;
+            }
+        }
+        return null;
     }
 
     /**
@@ -630,6 +929,11 @@ public class ConversationService {
 
         // 从消息表中加载消息列表
         List<Message> messages = messageRepository.findByConversationIdOrderByCreatedAtAsc(conversation.getId());
+        List<ClarificationQuestionMeta> clarificationQuestions = extractClarificationQuestions(conversation.getAiUnderstanding());
+        List<String> answeredQuestionIds = resolveAnsweredQuestionIds(messages, clarificationQuestions);
+        dto.setAnsweredQuestionIds(answeredQuestionIds);
+        dto.setCurrentQuestionIndex(resolveCurrentQuestionIndex(clarificationQuestions, answeredQuestionIds));
+
         List<MessageDTO> messageDTOs = messages.stream()
                 .map(msg -> {
                     MessageDTO msgDTO = new MessageDTO();
@@ -637,6 +941,7 @@ public class ConversationService {
                     msgDTO.setRole(msg.getRole().name().toLowerCase());
                     msgDTO.setSenderName(msg.getSenderName());
                     msgDTO.setContent(msg.getContent());
+                    msgDTO.setClarificationQuestionId(msg.getClarificationQuestionId());
                     msgDTO.setTimestamp(msg.getCreatedAt());
                     msgDTO.setToolCalls(new ArrayList<>());
                     return msgDTO;

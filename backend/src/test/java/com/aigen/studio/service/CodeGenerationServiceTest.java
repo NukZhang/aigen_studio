@@ -2,6 +2,7 @@ package com.aigen.studio.service;
 
 import com.aigen.studio.entity.Conversation;
 import com.aigen.studio.entity.ConversationStage;
+import com.aigen.studio.entity.Message;
 import com.aigen.studio.repository.ConversationRepository;
 import com.aigen.studio.repository.MessageRepository;
 import org.junit.jupiter.api.Test;
@@ -12,6 +13,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -254,5 +256,81 @@ class CodeGenerationServiceTest {
 
         assertEquals(ConversationStage.FAILED, conversation.getStage());
         assertTrue(conversation.getErrorMessage().contains("router-view"));
+    }
+
+    @Test
+    void generateCodeSendsHeartbeatWhenGenerationSilenceTooLong() throws Exception {
+        ConversationRepository conversationRepository = mock(ConversationRepository.class);
+        MessageRepository messageRepository = mock(MessageRepository.class);
+        PromptTaskService promptTaskService = mock(PromptTaskService.class);
+        PreviewScriptService previewScriptService = mock(PreviewScriptService.class);
+        UIPrototypeService uiPrototypeService = mock(UIPrototypeService.class);
+        FrontendScaffoldService frontendScaffoldService = new FrontendScaffoldService();
+        BackendGenerationFixer backendGenerationFixer = new BackendGenerationFixer();
+
+        Conversation conversation = new Conversation();
+        conversation.setId(4L);
+        conversation.setProjectName("Heartbeat Project");
+        conversation.setUserRequirement("Need full stack");
+        conversation.setAiUnderstanding("Understood");
+        conversation.setStage(ConversationStage.CODE_GENERATING);
+        conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+
+        when(conversationRepository.findById(4L)).thenReturn(Optional.of(conversation));
+        when(conversationRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(uiPrototypeService.getUIPrototype(4L)).thenReturn("<html><body><div>UI</div></body></html>");
+
+        doAnswer(invocation -> {
+            Path outputPath = invocation.getArgument(1);
+            Path srcDir = outputPath.resolve("frontend/src");
+            Path apiDir = srcDir.resolve("api");
+            Files.createDirectories(apiDir);
+            Files.writeString(srcDir.resolve("main.ts"), """
+                    import { createApp } from 'vue'
+                    import { createRouter, createWebHistory } from 'vue-router'
+                    import App from './App.vue'
+                    const router = createRouter({ history: createWebHistory(import.meta.env.BASE_URL), routes: [] })
+                    const app = createApp(App)
+                    app.use(router)
+                    app.mount('#app')
+                    """);
+            Files.writeString(srcDir.resolve("App.vue"), """
+                    <template>
+                      <router-view />
+                    </template>
+                    """);
+            Files.writeString(apiDir.resolve("http.ts"), """
+                    import axios from 'axios'
+                    export const http = axios.create({ baseURL: '/api', timeout: 10000 })
+                    """);
+
+            Thread.sleep(220L);
+            return null;
+        }).when(promptTaskService).generateCode(anyString(), any(Path.class), any());
+
+        CodeGenerationService service = new CodeGenerationService(
+                conversationRepository,
+                messageRepository,
+                promptTaskService,
+                previewScriptService,
+                uiPrototypeService,
+                frontendScaffoldService,
+                backendGenerationFixer
+        );
+        ReflectionTestUtils.setField(service, "outputDir", tempDir.toString());
+        ReflectionTestUtils.setField(service, "codeHeartbeatIntervalMillis", 50L);
+        ReflectionTestUtils.setField(service, "codeHeartbeatInitialDelayMillis", 10L);
+
+        service.generateCodeForConversationAsync(4L);
+
+        var captor = org.mockito.ArgumentCaptor.forClass(Message.class);
+        verify(messageRepository, atLeast(1)).save(captor.capture());
+        List<Message> messages = captor.getAllValues();
+
+        assertTrue(
+                messages.stream().anyMatch(m -> m.getContent() != null && m.getContent().contains("代码生成中")),
+                "Should emit heartbeat message during long code generation silence"
+        );
+        assertEquals(ConversationStage.READY_TO_START, conversation.getStage());
     }
 }

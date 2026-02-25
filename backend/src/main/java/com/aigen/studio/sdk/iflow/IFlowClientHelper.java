@@ -144,8 +144,35 @@ public class IFlowClientHelper implements ICodingService {
      */
     @Override
     public void executeTask(String prompt, Path workDir, MessageHandler handler) {
-        // 创建适配器，将 ICodingService.MessageHandler 转换为 IFlowMessageHandler
-        IFlowMessageHandler flowHandler = new IFlowMessageHandler() {
+        IFlowMessageHandler flowHandler = adaptHandler(handler);
+        IFlowClient client = createClient(workDir);
+        try {
+            executeTask(client, prompt, flowHandler);
+        } finally {
+            client.close();
+        }
+    }
+
+    @Override
+    public void executeTask(String prompt, Path workDir, MessageHandler handler, long timeoutMillis) {
+        IFlowMessageHandler flowHandler = adaptHandler(handler);
+        IFlowClient client = createClient(workDir, timeoutMillis);
+        try {
+            executeTask(client, prompt, flowHandler, timeoutMillis);
+        } finally {
+            client.close();
+        }
+    }
+
+    String formatToolResultContent(ToolResultMessage message) {
+        if (message == null || message.getContent() == null) {
+            return "";
+        }
+        return message.getContent().toString();
+    }
+
+    private IFlowMessageHandler adaptHandler(MessageHandler handler) {
+        return new IFlowMessageHandler() {
             @Override
             public void onAssistantMessage(AssistantMessage message) {
                 handler.onAssistantMessage(message.getChunk().getText());
@@ -176,18 +203,6 @@ public class IFlowClientHelper implements ICodingService {
                 handler.onComplete();
             }
         };
-
-        // 使用现有的 executeTask 方法
-        IFlowClient client = createClient(workDir);
-        executeTask(client, prompt, flowHandler);
-        client.close();
-    }
-
-    String formatToolResultContent(ToolResultMessage message) {
-        if (message == null || message.getContent() == null) {
-            return "";
-        }
-        return message.getContent().toString();
     }
 
     

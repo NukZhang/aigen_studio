@@ -30,6 +30,28 @@ class PromptTaskServiceTest {
     }
 
     @Test
+    void buildUnderstandingPromptIncludesRequirementGateProtocol() throws Exception {
+        PromptTaskService service = new PromptTaskService(new IFlowClientHelper());
+        Method method = PromptTaskService.class.getDeclaredMethod(
+                "buildUnderstandingPrompt",
+                String.class
+        );
+        method.setAccessible(true);
+
+        String prompt = (String) method.invoke(
+                service,
+                "春节祝福与排行榜小程序"
+        );
+
+        assertTrue(prompt.contains("<REQUIREMENT_GATE>"));
+        assertTrue(prompt.contains("NEXT_ACTION"));
+        assertTrue(prompt.contains("ASK_CLARIFICATION"));
+        assertTrue(prompt.contains("READY_FOR_CONFIRM"));
+        assertTrue(prompt.contains("<CLARIFICATION_PAYLOAD>"));
+        assertTrue(prompt.contains("</CLARIFICATION_PAYLOAD>"));
+    }
+
+    @Test
     void buildCodeGenerationPromptRendersTemplateVariables() throws Exception {
         PromptTaskService service = new PromptTaskService(new IFlowClientHelper());
         Method method = PromptTaskService.class.getDeclaredMethod(

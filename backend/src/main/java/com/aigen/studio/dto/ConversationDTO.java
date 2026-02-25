@@ -18,7 +18,7 @@ public class ConversationDTO {
     private Long id;                    // 对话 ID
     private String projectName;         // 项目名称
     private String status;              // 对话状态（ACTIVE, COMPLETED, CANCELLED, FAILED）
-    private String stage;               // 对话阶段（NEED_INPUT, UNDERSTANDING, UNDERSTANDING_CONFIRMED, CODE_GENERATING, SERVICE_STARTING, PREVIEWING, COMPLETED, FAILED）
+    private String stage;               // 对话阶段（NEED_INPUT, UNDERSTANDING, CLARIFYING, UNDERSTANDING_CONFIRMED, CODE_GENERATING, SERVICE_STARTING, PREVIEWING, COMPLETED, FAILED）
     private String userRequirement;     // 用户输入的需求描述
     private String aiUnderstanding;     // AI 理解的需求
     private Boolean understandingConfirmed;  // 用户是否确认理解内容
@@ -29,6 +29,8 @@ public class ConversationDTO {
     private String uiPrototypeContent;  // UI 原型内容（HTML）
     private Boolean uiConfirmed;        // 用户是否确认 UI 设计
     private String errorMessage;        // 错误信息
+    private Integer currentQuestionIndex; // 当前应答题目索引（基于 CLARIFICATION_PAYLOAD.questions）
+    private List<String> answeredQuestionIds; // 已回答题目 ID 列表
     private LocalDateTime createdAt;    // 创建时间
     private LocalDateTime updatedAt;    // 更新时间
     private List<MessageDTO> messages;  // 消息列表

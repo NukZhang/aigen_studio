@@ -22,4 +22,5 @@ public class MessageDTO {
     private List<ToolCallDTO> toolCalls; // 工具调用列表（仅 AI 消息）
     private String senderName;          // 发送者名称（user: 用户名, assistant: AI 开发者）
     private String senderAvatar;        // 发送者头像 URL
+    private String clarificationQuestionId; // 当前澄清问题 ID（可选）
 }

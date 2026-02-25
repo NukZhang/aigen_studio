@@ -49,6 +49,12 @@ public class Message {
     private String content;
 
     /**
+     * 澄清问题 ID（仅在用户回答澄清问题时存在）
+     */
+    @Column(name = "clarification_question_id")
+    private String clarificationQuestionId;
+
+    /**
      * 创建时间
      */
     @CreationTimestamp
