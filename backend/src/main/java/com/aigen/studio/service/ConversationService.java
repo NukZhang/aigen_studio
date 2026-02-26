@@ -1,21 +1,39 @@
 package com.aigen.studio.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.aigen.studio.dto.*;
 import com.aigen.studio.entity.*;
 import com.aigen.studio.repository.ConversationRepository;
 import com.aigen.studio.repository.MessageRepository;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -52,6 +70,22 @@ public class ConversationService {
     private final PromptTaskService promptTaskService;
     private final CodeGenerationService codeGenerationService;
     private final UIPrototypeService uiPrototypeService;
+    private final PreviewService previewService;
+    private final SdacResourceService sdacResourceService;
+    @Qualifier("taskExecutor")
+    private final Executor taskExecutor;
+
+    @Value("${iflow.sdk.understanding-heartbeat-interval-ms:15000}")
+    private long understandingHeartbeatIntervalMillis = 15000L;
+
+    @Value("${iflow.sdk.understanding-heartbeat-initial-delay-ms:5000}")
+    private long understandingHeartbeatInitialDelayMillis = 5000L;
+
+    @Value("${aigen.preview.allow-unverified-preview:false}")
+    private boolean allowUnverifiedPreview = false;
+
+    private final Set<Long> runningUnderstandingConversations = ConcurrentHashMap.newKeySet();
+    private final Set<Long> queuedUnderstandingConversations = ConcurrentHashMap.newKeySet();
 
     private record ClarificationQuestionMeta(String id, String question) {}
 
@@ -71,6 +105,8 @@ public class ConversationService {
         conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
         conversation.setStage(ConversationStage.NEED_INPUT);
         conversation.setUnderstandingConfirmed(false);
+        conversation.setUiConfirmed(false);
+        conversation.setGateStatusJson(defaultGateStatusJson());
 
         conversation = conversationRepository.save(conversation);
         return convertToDTO(conversation);
@@ -273,34 +309,12 @@ public class ConversationService {
         // 保存用户需求
         conversation.setUserRequirement(safeText(message.getContent()));
         conversation.setStage(ConversationStage.UNDERSTANDING);
+        conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+        conversation.setErrorMessage(null);
         conversationRepository.save(conversation);
-
-        try {
-            // 调用 iFlow SDK 理解需求
-            log.info("Understanding requirement for conversation: {}", conversation.getId());
-            String aiUnderstanding = promptTaskService.understandRequirement(conversation.getUserRequirement());
-            conversation.setAiUnderstanding(aiUnderstanding);
-            ConversationStage nextStage = resolveUnderstandingStage(aiUnderstanding);
-            conversation.setStage(nextStage);
-            updateProjectNameAfterUnderstanding(conversation, conversation.getUserRequirement());
-            conversationRepository.save(conversation);
-
-            response.setContent(buildUnderstandingResponse(
-                    "我已收到您的需求：" + message.getContent() + "\n\n" +
-                            "让我理解一下您的需求：",
-                    conversation.getAiUnderstanding(),
-                    nextStage,
-                    "请问这个理解是否正确？如果需要修改，请告诉我。"
-            ));
-        } catch (Exception e) {
-            log.error("Failed to understand requirement", e);
-            conversation.setStage(ConversationStage.UNDERSTANDING);
-            conversation.setErrorMessage("理解需求失败: " + e.getMessage());
-            conversationRepository.save(conversation);
-
-            response.setContent("抱歉，理解需求时出现错误：" + e.getMessage() + "\n\n" +
-                    "请稍后重试，或重新描述您的需求。");
-        }
+        enqueueUnderstanding(conversation.getId());
+        response.setContent("我已收到您的需求，正在后台理解中。\n\n" +
+                "理解过程会持续输出进度与中间结论，请稍候。");
     }
 
     /**
@@ -314,31 +328,14 @@ public class ConversationService {
                 ? requirementDelta
                 : currentRequirement + "\n" + requirementDelta;
         conversation.setUserRequirement(updatedRequirement);
+        conversation.setStage(ConversationStage.UNDERSTANDING);
+        conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+        conversation.setErrorMessage(null);
+        conversationRepository.save(conversation);
 
-        try {
-            // 重新理解需求
-            log.info("Re-understanding requirement for conversation: {}", conversation.getId());
-            String aiUnderstanding = promptTaskService.understandRequirement(updatedRequirement);
-            conversation.setAiUnderstanding(aiUnderstanding);
-            ConversationStage nextStage = resolveUnderstandingStage(aiUnderstanding);
-            conversation.setStage(nextStage);
-            updateProjectNameAfterUnderstanding(conversation, updatedRequirement);
-            conversationRepository.save(conversation);
-
-            response.setContent(buildUnderstandingResponse(
-                    "我已更新您的需求，让我重新理解：",
-                    conversation.getAiUnderstanding(),
-                    nextStage,
-                    "请问这个理解是否正确？如果需要修改，请告诉我。"
-            ));
-        } catch (Exception e) {
-            log.error("Failed to re-understand requirement", e);
-            conversation.setErrorMessage("重新理解需求失败: " + e.getMessage());
-            conversationRepository.save(conversation);
-
-            response.setContent("抱歉，重新理解需求时出现错误：" + e.getMessage() + "\n\n" +
-                    "请稍后重试。");
-        }
+        enqueueUnderstanding(conversation.getId());
+        response.setContent("已收到你的补充信息，正在后台重新理解需求。\n\n" +
+                "你会看到持续的理解心跳和中间结果。");
     }
 
     /**
@@ -407,6 +404,233 @@ public class ConversationService {
     private void handlePreviewing(Conversation conversation, MessageDTO message, MessageDTO response) {
         response.setContent("您可以在\"预览\"标签页查看应用效果。\n\n" +
                 "如果需要修改，请告诉我。");
+    }
+
+    private void enqueueUnderstanding(Long conversationId) {
+        if (conversationId == null) {
+            return;
+        }
+
+        if (runningUnderstandingConversations.add(conversationId)) {
+            emitSystemMessage(conversationId, "需求理解任务已启动，正在分析中...");
+            taskExecutor.execute(() -> runUnderstandingLoop(conversationId));
+            return;
+        }
+
+        queuedUnderstandingConversations.add(conversationId);
+        emitSystemMessage(conversationId, "已记录新的补充信息，当前理解结束后会自动继续。");
+    }
+
+    private void runUnderstandingLoop(Long conversationId) {
+        try {
+            while (true) {
+                queuedUnderstandingConversations.remove(conversationId);
+                runSingleUnderstanding(conversationId);
+                if (!queuedUnderstandingConversations.remove(conversationId)) {
+                    break;
+                }
+                emitSystemMessage(conversationId, "检测到最新补充信息，继续理解需求...");
+            }
+        } finally {
+            runningUnderstandingConversations.remove(conversationId);
+            if (queuedUnderstandingConversations.remove(conversationId)) {
+                enqueueUnderstanding(conversationId);
+            }
+        }
+    }
+
+    private void runSingleUnderstanding(Long conversationId) {
+        Conversation snapshotConversation = conversationRepository.findById(conversationId).orElse(null);
+        if (snapshotConversation == null) {
+            return;
+        }
+
+        String requirementSnapshot = safeText(snapshotConversation.getUserRequirement());
+        if (requirementSnapshot.isBlank()) {
+            return;
+        }
+
+        long startAt = System.currentTimeMillis();
+        AtomicBoolean heartbeatRunning = new AtomicBoolean(true);
+        AtomicReference<String> latestInsight = new AtomicReference<>("");
+        AtomicBoolean firstChunkReceived = new AtomicBoolean(false);
+        Thread heartbeatThread = startUnderstandingHeartbeatThread(
+                conversationId,
+                heartbeatRunning,
+                startAt,
+                latestInsight
+        );
+
+        String aiUnderstanding;
+        try {
+            aiUnderstanding = promptTaskService.understandRequirement(requirementSnapshot, chunk -> {
+                String snippet = summarizeInsightSnippet(chunk);
+                if (!snippet.isBlank()) {
+                    latestInsight.set(snippet);
+                }
+                if (firstChunkReceived.compareAndSet(false, true)) {
+                    emitSystemMessage(conversationId, "已收到初步理解结果，正在整理结构化内容...");
+                }
+            });
+        } catch (Exception e) {
+            stopUnderstandingHeartbeatThread(heartbeatRunning, heartbeatThread);
+            handleUnderstandingFailure(conversationId, e);
+            return;
+        }
+
+        stopUnderstandingHeartbeatThread(heartbeatRunning, heartbeatThread);
+
+        Conversation latestConversation = conversationRepository.findById(conversationId).orElse(null);
+        if (latestConversation == null) {
+            return;
+        }
+
+        String latestRequirement = safeText(latestConversation.getUserRequirement());
+        if (!latestRequirement.equals(requirementSnapshot)) {
+            emitSystemMessage(conversationId, "检测到需求已更新，忽略本轮旧结果并继续处理最新内容。");
+            queuedUnderstandingConversations.add(conversationId);
+            return;
+        }
+
+        ConversationStage nextStage = resolveUnderstandingStage(aiUnderstanding);
+        latestConversation.setAiUnderstanding(aiUnderstanding);
+        latestConversation.setStage(nextStage);
+        latestConversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+        latestConversation.setErrorMessage(null);
+        latestConversation.setUnderstandingConfirmed(false);
+        latestConversation.setUiConfirmed(false);
+        updateProjectNameAfterUnderstanding(latestConversation, requirementSnapshot);
+        conversationRepository.save(latestConversation);
+
+        persistAssistantMessage(conversationId, buildUnderstandingResponse(
+                "我已根据当前信息完成一轮理解：",
+                aiUnderstanding,
+                nextStage,
+                "请问这个理解是否正确？如果需要修改，请告诉我。"
+        ));
+    }
+
+    private void handleUnderstandingFailure(Long conversationId, Exception e) {
+        log.error("Failed to understand requirement asynchronously for conversation {}", conversationId, e);
+
+        Conversation conversation = conversationRepository.findById(conversationId).orElse(null);
+        if (conversation != null) {
+            conversation.setStage(ConversationStage.UNDERSTANDING);
+            conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+            conversation.setErrorMessage("重新理解需求失败: " + e.getMessage());
+            conversationRepository.save(conversation);
+        }
+
+        persistAssistantMessage(conversationId, "抱歉，重新理解需求时出现错误：" + e.getMessage() + "\n\n请稍后重试。");
+    }
+
+    private Thread startUnderstandingHeartbeatThread(
+            Long conversationId,
+            AtomicBoolean running,
+            long startAt,
+            AtomicReference<String> latestInsight
+    ) {
+        if (understandingHeartbeatIntervalMillis <= 0) {
+            return null;
+        }
+
+        Thread heartbeatThread = new Thread(() -> {
+            sleepHeartbeat(understandingHeartbeatInitialDelayMillis);
+            while (running.get() && !Thread.currentThread().isInterrupted()) {
+                emitUnderstandingHeartbeatMessage(conversationId, startAt, latestInsight.get());
+                sleepHeartbeat(understandingHeartbeatIntervalMillis);
+            }
+        }, "understanding-heartbeat-" + conversationId);
+
+        heartbeatThread.setDaemon(true);
+        heartbeatThread.start();
+        return heartbeatThread;
+    }
+
+    private void stopUnderstandingHeartbeatThread(AtomicBoolean running, Thread heartbeatThread) {
+        running.set(false);
+        if (heartbeatThread != null) {
+            heartbeatThread.interrupt();
+            try {
+                heartbeatThread.join(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private void emitUnderstandingHeartbeatMessage(Long conversationId, long startAt, String latestInsight) {
+        try {
+            if (!runningUnderstandingConversations.contains(conversationId)) {
+                return;
+            }
+            Conversation conversation = conversationRepository.findById(conversationId).orElse(null);
+            if (conversation == null || conversation.getStage() != ConversationStage.UNDERSTANDING) {
+                return;
+            }
+
+            long elapsedSeconds = Math.max(1L, (System.currentTimeMillis() - startAt) / 1000);
+            String insight = summarizeInsightSnippet(latestInsight);
+            String content = "需求理解中，已等待 " + elapsedSeconds + " 秒，请稍候...";
+            if (!insight.isBlank()) {
+                content += "\n当前理解片段：" + insight;
+            }
+            emitSystemMessage(conversationId, content);
+        } catch (Exception e) {
+            log.warn("Failed to emit understanding heartbeat for conversation {}", conversationId, e);
+        }
+    }
+
+    private String summarizeInsightSnippet(String text) {
+        String normalized = safeText(text)
+                .replaceAll("\\s+", " ")
+                .replace("<REQUIREMENT_GATE>", "")
+                .replace("</REQUIREMENT_GATE>", "")
+                .replace("<CLARIFICATION_PAYLOAD>", "")
+                .replace("</CLARIFICATION_PAYLOAD>", "");
+        if (normalized.isBlank()) {
+            return "";
+        }
+        return normalized.length() <= 80 ? normalized : normalized.substring(0, 80) + "...";
+    }
+
+    private void sleepHeartbeat(long millis) {
+        if (millis <= 0) {
+            return;
+        }
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private void emitSystemMessage(Long conversationId, String content) {
+        persistMessage(conversationId, Message.MessageRole.SYSTEM, "系统", content, null);
+    }
+
+    private void persistAssistantMessage(Long conversationId, String content) {
+        persistMessage(conversationId, Message.MessageRole.ASSISTANT, "AI 开发者", content, null);
+    }
+
+    private void persistMessage(
+            Long conversationId,
+            Message.MessageRole role,
+            String senderName,
+            String content,
+            String clarificationQuestionId
+    ) {
+        String normalizedContent = safeText(content);
+        if (conversationId == null || normalizedContent.isBlank()) {
+            return;
+        }
+        Message message = new Message();
+        message.setConversationId(conversationId);
+        message.setRole(role);
+        message.setSenderName(senderName);
+        message.setContent(normalizedContent);
+        message.setClarificationQuestionId(safeText(clarificationQuestionId));
+        messageRepository.save(message);
     }
 
     private void handleIdleStageMessage(Conversation conversation, MessageDTO message, MessageDTO response) {
@@ -555,6 +779,9 @@ public class ConversationService {
         if (stage == ConversationStage.CODE_GENERATING) {
             return codeGenerationService.isCodeGenerationInProgress(conversation.getId());
         }
+        if (stage == ConversationStage.UNDERSTANDING) {
+            return runningUnderstandingConversations.contains(conversation.getId());
+        }
         if (stage == ConversationStage.SERVICE_STARTING) {
             return true;
         }
@@ -567,6 +794,7 @@ public class ConversationService {
 
     private String buildTaskRunningMessage(Conversation conversation) {
         return switch (conversation.getStage()) {
+            case UNDERSTANDING -> "当前需求正在理解中，请等待理解任务完成后再操作。";
             case UI_GENERATING -> "当前 UI 原型正在生成中，请等待当前任务完成后再操作。";
             case CODE_GENERATING -> "当前代码任务正在运行，请等待完成后再操作。";
             case SERVICE_STARTING -> "当前服务正在启动，请等待完成后再操作。";
@@ -827,32 +1055,37 @@ public class ConversationService {
                 continue;
             }
 
-            String answeredQuestionText = extractAnsweredQuestionText(message.getContent());
-            if (answeredQuestionText.isBlank()) {
+            List<String> answeredQuestionTexts = extractAnsweredQuestionTexts(message.getContent());
+            if (answeredQuestionTexts.isEmpty()) {
                 continue;
             }
 
-            String resolvedQuestionId = questionIdByText.get(normalizeQuestionForMatch(answeredQuestionText));
-            if (resolvedQuestionId != null) {
-                answeredQuestionIds.add(resolvedQuestionId);
+            for (String answeredQuestionText : answeredQuestionTexts) {
+                String resolvedQuestionId = questionIdByText.get(normalizeQuestionForMatch(answeredQuestionText));
+                if (resolvedQuestionId != null) {
+                    answeredQuestionIds.add(resolvedQuestionId);
+                }
             }
         }
 
         return List.copyOf(answeredQuestionIds);
     }
 
-    private String extractAnsweredQuestionText(String messageContent) {
+    private List<String> extractAnsweredQuestionTexts(String messageContent) {
         String content = safeText(messageContent);
         if (content.isBlank()) {
-            return "";
+            return List.of();
         }
 
         Matcher matcher = ANSWERED_QUESTION_PATTERN.matcher(content);
-        if (!matcher.find()) {
-            return "";
+        List<String> answeredQuestions = new ArrayList<>();
+        while (matcher.find()) {
+            String matchedQuestion = safeText(matcher.group(1));
+            if (!matchedQuestion.isBlank()) {
+                answeredQuestions.add(matchedQuestion);
+            }
         }
-
-        return safeText(matcher.group(1));
+        return answeredQuestions;
     }
 
     private String normalizeQuestionForMatch(String question) {
@@ -905,6 +1138,745 @@ public class ConversationService {
         return convertToDTO(conversation);
     }
 
+    // ==================== SDAC 流程 API ====================
+
+    /**
+     * understanding/parse：解析门控协议并产出澄清问题或契约卡
+     */
+    public Map<String, Object> parseUnderstanding(Long conversationId) {
+        Conversation conversation = conversationRepository.findById(conversationId)
+                .orElseThrow(() -> new RuntimeException("Conversation not found: " + conversationId));
+
+        String requirement = safeText(conversation.getUserRequirement());
+        if (requirement.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "缺少需求内容，无法解析理解结果");
+        }
+
+        String aiUnderstanding = promptTaskService.understandRequirement(requirement);
+        conversation.setAiUnderstanding(aiUnderstanding);
+        conversation.setUnderstandingConfirmed(false);
+        conversation.setMe2aiConfirmedAt(null);
+
+        String nextAction = extractRequirementGateValue(aiUnderstanding, "NEXT_ACTION");
+        if ("ASK_CLARIFICATION".equalsIgnoreCase(nextAction)) {
+            List<Map<String, Object>> questions = extractClarificationQuestionsForApi(aiUnderstanding);
+            conversation.setClarificationQuestionsJson(writeJson(Map.of("questions", questions)));
+            conversation.setMe2aiContractJson(null);
+            conversation.setStage(ConversationStage.CLARIFYING);
+            updateGateStatus(conversation, "REQ", "BLOCKED");
+            conversationRepository.save(conversation);
+
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("nextAction", "ASK_CLARIFICATION");
+            response.put("questions", questions);
+            return response;
+        }
+
+        Map<String, Object> contract = buildMe2AiContract(aiUnderstanding, requirement);
+        conversation.setClarificationQuestionsJson(null);
+        conversation.setMe2aiContractJson(writeJson(contract));
+        conversation.setStage(ConversationStage.UNDERSTANDING_CONFIRMED);
+        updateGateStatus(conversation, "REQ", "READY_FOR_CONFIRM");
+        conversationRepository.save(conversation);
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("nextAction", "READY_FOR_CONFIRM");
+        response.put("contract", contract);
+        return response;
+    }
+
+    /**
+     * understanding/confirm：REQ Gate 确认
+     */
+    public ConversationDTO confirmUnderstandingSdac(Long conversationId, ConfirmUnderstandingRequest request) {
+        Conversation conversation = conversationRepository.findById(conversationId)
+                .orElseThrow(() -> new RuntimeException("Conversation not found: " + conversationId));
+
+        boolean confirmed = request != null && Boolean.TRUE.equals(request.getConfirmed());
+        if (confirmed) {
+            if (safeText(conversation.getMe2aiContractJson()).isBlank()) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "REQ Gate 未通过：缺少需求契约卡");
+            }
+            conversation.setUnderstandingConfirmed(true);
+            conversation.setMe2aiConfirmedAt(LocalDateTime.now());
+            conversation.setStage(ConversationStage.UNDERSTANDING_CONFIRMED);
+            updateGateStatus(conversation, "REQ", "PASS");
+        } else {
+            conversation.setUnderstandingConfirmed(false);
+            conversation.setStage(ConversationStage.UNDERSTANDING);
+            updateGateStatus(conversation, "REQ", "BLOCKED");
+        }
+
+        conversation = conversationRepository.save(conversation);
+        return convertToDTO(conversation);
+    }
+
+    /**
+     * ui/design：REQ Gate 通过后进入 UI 设计
+     */
+    public Map<String, Object> designUi(Long conversationId) {
+        Conversation conversation = conversationRepository.findById(conversationId)
+                .orElseThrow(() -> new RuntimeException("Conversation not found: " + conversationId));
+
+        if (!Boolean.TRUE.equals(conversation.getUnderstandingConfirmed())
+                || safeText(conversation.getMe2aiContractJson()).isBlank()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "REQ Gate 未通过");
+        }
+
+        Map<String, Object> contract = readJsonMap(conversation.getMe2aiContractJson());
+        Map<String, Object> uiSpec = buildUiSpec(contract, conversation);
+        sdacResourceService.validateUiSpec(uiSpec);
+
+        String prototypeHtml = safeText(conversation.getUiPrototypeContent());
+        String prototypePath = safeText(conversation.getUiPrototypePath());
+        if (prototypeHtml.isBlank()) {
+            prototypeHtml = buildDefaultPrototypeHtml(conversation, uiSpec);
+            Path htmlFile = uiPrototypeService.saveUIPrototype(conversationId, prototypeHtml);
+            prototypePath = htmlFile.toString();
+            conversation.setUiPrototypeContent(prototypeHtml);
+            conversation.setUiPrototypePath(prototypePath);
+        }
+
+        conversation.setUiSpecJson(writeJson(uiSpec));
+        conversation.setUiConfirmed(false);
+        conversation.setUiConfirmedAt(null);
+        conversation.setStage(ConversationStage.UI_DESIGNING);
+        updateGateStatus(conversation, "UI", "READY_FOR_CONFIRM");
+        conversation = conversationRepository.save(conversation);
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("conversation", convertToDTO(conversation));
+        response.put("uiSpec", uiSpec);
+        response.put("prototypePath", safeText(conversation.getUiPrototypePath()));
+        response.put("prototypeUrl", "/ui-prototype/" + conversationId);
+        return response;
+    }
+
+    /**
+     * ui/confirm：UI Gate 通过
+     */
+    public ConversationDTO confirmUiDesign(Long conversationId) {
+        Conversation conversation = conversationRepository.findById(conversationId)
+                .orElseThrow(() -> new RuntimeException("Conversation not found: " + conversationId));
+
+        if (safeText(conversation.getUiSpecJson()).isBlank()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "UI Gate 未通过：缺少 UI_Spec");
+        }
+
+        conversation.setUiConfirmed(true);
+        conversation.setUiConfirmedAt(LocalDateTime.now());
+        conversation.setStage(ConversationStage.UI_CONFIRMED);
+        updateGateStatus(conversation, "UI", "PASS");
+        conversation = conversationRepository.save(conversation);
+        return convertToDTO(conversation);
+    }
+
+    /**
+     * implementation/plan：生成实现计划
+     */
+    public Map<String, Object> createImplementationPlan(Long conversationId) {
+        Conversation conversation = conversationRepository.findById(conversationId)
+                .orElseThrow(() -> new RuntimeException("Conversation not found: " + conversationId));
+
+        if (!Boolean.TRUE.equals(conversation.getUiConfirmed())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "UI Gate 未通过");
+        }
+
+        Map<String, Object> contract = readJsonMap(conversation.getMe2aiContractJson());
+        List<String> scope = toStringList(contract.get("coreFeatures"));
+        if (scope.isEmpty()) {
+            scope = List.of("完成核心业务流程的最小可用实现");
+        }
+
+        List<String> nonGoals = toStringList(contract.get("scopeExclusions"));
+        if (nonGoals.isEmpty()) {
+            nonGoals = List.of("不扩展额外业务模块");
+        }
+
+        Map<String, Object> plan = new LinkedHashMap<>();
+        plan.put("scope", scope.stream().limit(3).toList());
+        plan.put("nonGoals", nonGoals.stream().limit(3).toList());
+        plan.put("filesToChange", List.of(
+                "frontend/src/views/Workspace.vue",
+                "backend/src/main/java/com/aigen/studio/controller/ConversationController.java"
+        ));
+        plan.put("verifications", List.of(
+                "cd backend && mvn test",
+                "cd frontend && npm run test"
+        ));
+        plan.put("evidenceExpected", List.of(
+                "测试报告摘要",
+                "关键日志路径",
+                "产物清单引用"
+        ));
+        sdacResourceService.validateImplementationPlan(plan);
+
+        conversation.setImplementationPlanJson(writeJson(plan));
+        conversation.setStage(ConversationStage.CODE_GENERATING);
+        updateGateStatus(conversation, "IMP", "READY_FOR_VERIFY");
+        conversationRepository.save(conversation);
+
+        return plan;
+    }
+
+    /**
+     * implementation/verify：验证并产出 Evidence Manifest（成功/失败都落盘）
+     */
+    public Map<String, Object> verifyImplementation(Long conversationId, ImplementationVerifyRequest request) {
+        Conversation conversation = conversationRepository.findById(conversationId)
+                .orElseThrow(() -> new RuntimeException("Conversation not found: " + conversationId));
+
+        if (safeText(conversation.getImplementationPlanJson()).isBlank()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "IMP Gate 未通过：缺少 Implementation Plan");
+        }
+
+        LocalDateTime startedAt = LocalDateTime.now();
+        List<Map<String, Object>> verificationItems = toVerificationItems(request);
+        String result = resolveVerificationResult(request, verificationItems);
+        List<String> artifacts = new ArrayList<>(toArtifacts(request, conversation));
+        Path stateUpdatePath = persistAi2AiStateUpdate(conversation, verificationItems, artifacts, result);
+        artifacts.add(stateUpdatePath.toString());
+
+        Map<String, Object> manifest = new LinkedHashMap<>();
+        manifest.put("inputs", buildManifestInputs(conversation));
+        manifest.put("verifications", verificationItems);
+        manifest.put("result", result);
+        manifest.put("artifacts", artifacts);
+        manifest.put("timestamps", Map.of(
+                "startedAt", startedAt.toString(),
+                "finishedAt", LocalDateTime.now().toString()
+        ));
+        sdacResourceService.validateEvidenceManifest(manifest);
+
+        Path manifestPath = persistEvidenceManifest(conversation, manifest);
+        conversation.setEvidenceManifestPath(manifestPath.toString());
+        updateGateStatus(conversation, "IMP", result);
+        if ("PASS".equals(result)) {
+            conversation.setStage(ConversationStage.READY_TO_START);
+        }
+        conversationRepository.save(conversation);
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("result", result);
+        response.put("manifestPath", manifestPath.toString());
+        response.put("verifications", verificationItems);
+        return response;
+    }
+
+    /**
+     * preview/start：PREVIEW Gate（必须绑定 evidence）
+     */
+    public PreviewStatusDTO startPreviewWithEvidence(Long conversationId, PreviewStartRequest request) {
+        Conversation conversation = conversationRepository.findById(conversationId)
+                .orElseThrow(() -> new RuntimeException("Conversation not found: " + conversationId));
+
+        String evidenceRef = request == null ? "" : safeText(request.getEvidenceRef());
+        if (evidenceRef.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "必须传 evidenceRef");
+        }
+
+        String storedEvidencePath = safeText(conversation.getEvidenceManifestPath());
+        if (!allowUnverifiedPreview) {
+            if (storedEvidencePath.isBlank()) {
+                updateGateStatus(conversation, "PREVIEW", "BLOCKED");
+                conversationRepository.save(conversation);
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Preview Gate 未通过：缺少 evidence");
+            }
+            if (!isSameEvidenceRef(storedEvidencePath, evidenceRef)) {
+                updateGateStatus(conversation, "PREVIEW", "BLOCKED");
+                conversationRepository.save(conversation);
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Preview Gate 未通过：evidenceRef 不匹配");
+            }
+        }
+
+        updateGateStatus(conversation, "PREVIEW", "PASS");
+        conversationRepository.save(conversation);
+
+        PreviewStatusDTO status = previewService.startPreview(conversationId);
+        Map<String, Object> previewContract = buildPreviewContract(status, evidenceRef);
+        sdacResourceService.validatePreviewContract(previewContract);
+        return status;
+    }
+
+    private List<Map<String, Object>> extractClarificationQuestionsForApi(String aiUnderstanding) {
+        String source = safeText(aiUnderstanding);
+        Matcher matcher = CLARIFICATION_PAYLOAD_PATTERN.matcher(source);
+        if (!matcher.find()) {
+            return List.of();
+        }
+        try {
+            JsonNode root = OBJECT_MAPPER.readTree(safeText(matcher.group(1)));
+            JsonNode questionsNode = root.path("questions");
+            if (!questionsNode.isArray()) {
+                return List.of();
+            }
+            List<Map<String, Object>> questions = new ArrayList<>();
+            for (int i = 0; i < questionsNode.size(); i++) {
+                JsonNode item = questionsNode.get(i);
+                String question = safeText(item.path("question").asText(""));
+                if (question.isBlank()) {
+                    continue;
+                }
+                String id = safeText(item.path("id").asText(""));
+                if (id.isBlank()) {
+                    id = "q" + (i + 1);
+                }
+                List<String> options = new ArrayList<>();
+                JsonNode optionsNode = item.path("options");
+                if (optionsNode.isArray()) {
+                    for (JsonNode option : optionsNode) {
+                        String normalized = safeText(option.asText(""));
+                        if (!normalized.isBlank()) {
+                            options.add(normalized);
+                        }
+                    }
+                }
+                Map<String, Object> questionMap = new LinkedHashMap<>();
+                questionMap.put("id", id);
+                questionMap.put("question", question);
+                questionMap.put("options", options);
+                questions.add(questionMap);
+            }
+            return questions;
+        } catch (Exception e) {
+            log.warn("Failed to parse clarification payload for SDAC API", e);
+            return List.of();
+        }
+    }
+
+    private Map<String, Object> buildMe2AiContract(String aiUnderstanding, String requirementFallback) {
+        List<String> lines = List.of(safeText(aiUnderstanding).split("\\R"));
+        Map<String, List<String>> sections = new LinkedHashMap<>();
+        sections.put("projectGoal", new ArrayList<>());
+        sections.put("platformAndTargetUsers", new ArrayList<>());
+        sections.put("coreFeatures", new ArrayList<>());
+        sections.put("keyBusinessRules", new ArrayList<>());
+        sections.put("scopeExclusions", new ArrayList<>());
+        sections.put("nonFunctionalRequirements", new ArrayList<>());
+        sections.put("acceptanceCriteria", new ArrayList<>());
+        sections.put("risksAndOpenQuestions", new ArrayList<>());
+
+        String currentSection = "";
+        for (String rawLine : lines) {
+            String line = safeText(rawLine);
+            if (line.isBlank() || line.startsWith("<REQUIREMENT_GATE>") || line.startsWith("</REQUIREMENT_GATE>")) {
+                continue;
+            }
+            String section = resolveContractSection(line);
+            if (!section.isBlank()) {
+                currentSection = section;
+                continue;
+            }
+            String normalized = line
+                    .replaceFirst("^[-*]\\s*", "")
+                    .replaceFirst("^\\d+[\\.、]\\s*", "")
+                    .trim();
+            if (normalized.isBlank() || currentSection.isBlank()) {
+                continue;
+            }
+            sections.get(currentSection).add(normalized);
+        }
+
+        Map<String, Object> contract = new LinkedHashMap<>();
+        contract.put("projectGoal", firstOrDefault(sections.get("projectGoal"), safeText(requirementFallback)));
+        contract.put("platformAndTargetUsers", firstOrDefault(sections.get("platformAndTargetUsers"), "平台和目标用户待确认"));
+        contract.put("coreFeatures", nonEmptyOrDefault(sections.get("coreFeatures"), List.of("核心流程实现")));
+        contract.put("keyBusinessRules", nonEmptyOrDefault(sections.get("keyBusinessRules"), List.of("关键规则待确认")));
+        contract.put("scopeExclusions", nonEmptyOrDefault(sections.get("scopeExclusions"), List.of("范围外事项待补充")));
+        contract.put("nonFunctionalRequirements", nonEmptyOrDefault(sections.get("nonFunctionalRequirements"), List.of("性能与安全基线")));
+        contract.put("acceptanceCriteria", nonEmptyOrDefault(sections.get("acceptanceCriteria"), List.of("核心流程可验证")));
+        contract.put("risksAndOpenQuestions", firstOrDefault(sections.get("risksAndOpenQuestions"), "无"));
+        return contract;
+    }
+
+    private String resolveContractSection(String line) {
+        String normalized = line.replace("#", "").replace("：", ":").trim();
+        if (normalized.contains("项目目标")) {
+            return "projectGoal";
+        }
+        if (normalized.contains("平台与目标用户")) {
+            return "platformAndTargetUsers";
+        }
+        if (normalized.contains("核心功能")) {
+            return "coreFeatures";
+        }
+        if (normalized.contains("关键业务规则")) {
+            return "keyBusinessRules";
+        }
+        if (normalized.contains("范围外事项")) {
+            return "scopeExclusions";
+        }
+        if (normalized.contains("非功能要求")) {
+            return "nonFunctionalRequirements";
+        }
+        if (normalized.contains("验收标准")) {
+            return "acceptanceCriteria";
+        }
+        if (normalized.contains("风险与待确认项")) {
+            return "risksAndOpenQuestions";
+        }
+        return "";
+    }
+
+    private Map<String, Object> buildUiSpec(Map<String, Object> contract, Conversation conversation) {
+        List<String> coreFeatures = toStringList(contract.get("coreFeatures"));
+        String projectName = safeText(conversation.getProjectName());
+        if (projectName.isBlank()) {
+            projectName = "应用";
+        }
+
+        Map<String, Object> page = new LinkedHashMap<>();
+        page.put("id", "home");
+        page.put("name", projectName + "首页");
+        page.put("purpose", "承载核心业务入口");
+        page.put("components", nonEmptyOrDefault(coreFeatures, List.of("导航栏", "主内容区")));
+        page.put("states", List.of("loading", "success"));
+        page.put("emptyAndErrorStates", List.of("empty", "error"));
+        page.put("permissions", List.of("public"));
+
+        Map<String, Object> route = new LinkedHashMap<>();
+        route.put("path", "/");
+        route.put("pageId", "home");
+
+        Map<String, Object> interaction = new LinkedHashMap<>();
+        interaction.put("from", "home");
+        interaction.put("action", "click_primary_action");
+        interaction.put("to", "home");
+        interaction.put("notes", "主流程占位交互");
+
+        Map<String, Object> uiSpec = new LinkedHashMap<>();
+        uiSpec.put("pages", List.of(page));
+        uiSpec.put("routes", List.of(route));
+        uiSpec.put("globalStates", List.of("auth"));
+        uiSpec.put("interactions", List.of(interaction));
+        return uiSpec;
+    }
+
+    private String buildDefaultPrototypeHtml(Conversation conversation, Map<String, Object> uiSpec) {
+        String title = safeText(conversation.getProjectName());
+        if (title.isBlank()) {
+            title = "UI Prototype";
+        }
+        List<String> features = toStringList(uiSpec.get("globalStates"));
+        return """
+                <!doctype html>
+                <html lang="zh-CN">
+                <head>
+                  <meta charset="UTF-8" />
+                  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+                  <title>%s</title>
+                  <style>
+                    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #f5f7fb; color: #1f2937; }
+                    .wrap { max-width: 920px; margin: 40px auto; padding: 24px; }
+                    .card { background: #fff; border-radius: 16px; padding: 24px; box-shadow: 0 8px 28px rgba(0,0,0,0.08); }
+                    h1 { margin: 0 0 12px; font-size: 24px; }
+                    p { margin: 0 0 16px; line-height: 1.6; }
+                    ul { margin: 0; padding-left: 20px; }
+                  </style>
+                </head>
+                <body>
+                  <div class="wrap">
+                    <div class="card">
+                      <h1>%s</h1>
+                      <p>UI 设计阶段原型（可用于确认主流程）。</p>
+                      <ul><li>%s</li></ul>
+                    </div>
+                  </div>
+                </body>
+                </html>
+                """.formatted(title, title, String.join("</li><li>", nonEmptyOrDefault(features, List.of("状态管理"))));
+    }
+
+    private List<Map<String, Object>> toVerificationItems(ImplementationVerifyRequest request) {
+        if (request == null || request.getVerifications() == null || request.getVerifications().isEmpty()) {
+            return List.of(Map.of(
+                    "cmd", "manual-check",
+                    "status", "FAIL",
+                    "summary", "未提供验证项",
+                    "logsRef", ""
+            ));
+        }
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (ImplementationVerifyRequest.VerificationItem item : request.getVerifications()) {
+            String status = safeText(item.getStatus()).toUpperCase();
+            if (!"PASS".equals(status)) {
+                status = "FAIL";
+            }
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("cmd", safeText(item.getCmd()).isBlank() ? "unknown" : safeText(item.getCmd()));
+            row.put("status", status);
+            row.put("summary", safeText(item.getSummary()));
+            row.put("logsRef", safeText(item.getLogsRef()));
+            items.add(row);
+        }
+        return items;
+    }
+
+    private String resolveVerificationResult(ImplementationVerifyRequest request, List<Map<String, Object>> verificationItems) {
+        if (request != null && request.getPassed() != null) {
+            return request.getPassed() ? "PASS" : "FAIL";
+        }
+        for (Map<String, Object> item : verificationItems) {
+            if (!"PASS".equals(item.get("status"))) {
+                return "FAIL";
+            }
+        }
+        return "PASS";
+    }
+
+    private List<String> toArtifacts(ImplementationVerifyRequest request, Conversation conversation) {
+        if (request != null && request.getArtifacts() != null && !request.getArtifacts().isEmpty()) {
+            return request.getArtifacts().stream().map(this::safeText).filter(s -> !s.isBlank()).toList();
+        }
+        String codePath = safeText(conversation.getGeneratedCodePath());
+        if (!codePath.isBlank()) {
+            return List.of(codePath);
+        }
+        return List.of("n/a");
+    }
+
+    private Map<String, Object> buildManifestInputs(Conversation conversation) {
+        Map<String, Object> inputs = new LinkedHashMap<>();
+        inputs.put("me2aiContractHash", hashText(conversation.getMe2aiContractJson()));
+        inputs.put("uiSpecHash", hashText(conversation.getUiSpecJson()));
+        inputs.put("planHash", hashText(conversation.getImplementationPlanJson()));
+        String irHash = hashText(conversation.getAiUnderstanding());
+        if (!irHash.isBlank()) {
+            inputs.put("irHash", irHash);
+        }
+        return inputs;
+    }
+
+    private Path persistAi2AiStateUpdate(Conversation conversation,
+                                         List<Map<String, Object>> verificationItems,
+                                         List<String> artifacts,
+                                         String result) {
+        Path root = resolveConversationRoot(conversation);
+        Path evidenceDir = root.resolve("evidence");
+        try {
+            Files.createDirectories(evidenceDir);
+            List<String> commands = verificationItems.stream()
+                    .map(item -> safeText(Objects.toString(item.get("cmd"), "")))
+                    .filter(cmd -> !cmd.isBlank())
+                    .toList();
+            List<String> failedSummaries = verificationItems.stream()
+                    .filter(item -> "FAIL".equalsIgnoreCase(safeText(Objects.toString(item.get("status"), ""))))
+                    .map(item -> safeText(Objects.toString(item.get("summary"), "")))
+                    .filter(summary -> !summary.isBlank())
+                    .toList();
+
+            String markdown = sdacResourceService.renderAi2AiStateUpdate(
+                    "完成 implementation/verify，更新证据链并刷新 Gate 状态",
+                    "conversationId=%d, result=%s".formatted(conversation.getId(), result),
+                    commands,
+                    result,
+                    artifacts,
+                    failedSummaries
+            );
+            String fileName = "ai2ai-state-update-" + System.currentTimeMillis() + ".md";
+            Path stateFile = evidenceDir.resolve(fileName);
+            Files.writeString(stateFile, markdown, StandardCharsets.UTF_8);
+            return stateFile;
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to persist AI2AI state update", e);
+        }
+    }
+
+    private Path persistEvidenceManifest(Conversation conversation, Map<String, Object> manifest) {
+        Path root = resolveConversationRoot(conversation);
+        Path evidenceDir = root.resolve("evidence");
+        try {
+            Files.createDirectories(evidenceDir);
+            String fileName = "manifest-" + System.currentTimeMillis() + ".json";
+            Path manifestFile = evidenceDir.resolve(fileName);
+            Files.writeString(manifestFile, writeJson(manifest), StandardCharsets.UTF_8);
+            return manifestFile;
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to persist Evidence Manifest", e);
+        }
+    }
+
+    private Path resolveConversationRoot(Conversation conversation) {
+        String generatedCodePath = safeText(conversation.getGeneratedCodePath());
+        if (!generatedCodePath.isBlank()) {
+            return Paths.get(generatedCodePath).toAbsolutePath().normalize();
+        }
+        Path fallback = Paths.get("generated-code", "conversation-" + conversation.getId()).toAbsolutePath().normalize();
+        conversation.setGeneratedCodePath(fallback.toString());
+        return fallback;
+    }
+
+    private boolean isSameEvidenceRef(String persistedPath, String requestedRef) {
+        String persisted = safeText(persistedPath);
+        String requested = safeText(requestedRef);
+        if (persisted.equals(requested)) {
+            return true;
+        }
+        if (persisted.endsWith(requested) || requested.endsWith(persisted)) {
+            return true;
+        }
+        try {
+            Path p1 = Paths.get(persisted).normalize();
+            Path p2 = Paths.get(requested).normalize();
+            if (p1.equals(p2)) {
+                return true;
+            }
+            return Objects.equals(p1.getFileName(), p2.getFileName());
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private Map<String, Object> buildPreviewContract(PreviewStatusDTO status, String evidenceRef) {
+        String previewUrl = safeText(status == null ? "" : status.getFrontendUrl());
+        if (previewUrl.isBlank()) {
+            previewUrl = safeText(status == null ? "" : status.getBackendUrl());
+        }
+        if (previewUrl.isBlank()) {
+            previewUrl = "N/A";
+        }
+
+        List<Integer> ports = new ArrayList<>();
+        if (status != null && status.getFrontendPort() != null) {
+            ports.add(status.getFrontendPort());
+        }
+        if (status != null && status.getBackendPort() != null && !ports.contains(status.getBackendPort())) {
+            ports.add(status.getBackendPort());
+        }
+        if (ports.isEmpty()) {
+            ports.add(0);
+        }
+
+        List<String> knownLimits = new ArrayList<>();
+        String message = safeText(status == null ? "" : status.getMessage());
+        if (!message.isBlank()) {
+            knownLimits.add(message);
+        } else {
+            knownLimits.add("无");
+        }
+
+        Map<String, Object> contract = new LinkedHashMap<>();
+        contract.put("previewUrl", previewUrl);
+        contract.put("ports", ports);
+        contract.put("startSteps", List.of(
+                "调用 /conversations/{id}/preview/start 并传 evidenceRef",
+                "等待 preview 状态进入 running=true"
+        ));
+        contract.put("evidenceRef", safeText(evidenceRef));
+        contract.put("knownLimits", knownLimits);
+        contract.put("testAccounts", List.of());
+        return contract;
+    }
+
+    private List<String> toStringList(Object value) {
+        if (!(value instanceof List<?> list)) {
+            return List.of();
+        }
+        return list.stream()
+                .map(item -> safeText(item == null ? "" : item.toString()))
+                .filter(item -> !item.isBlank())
+                .toList();
+    }
+
+    private List<String> nonEmptyOrDefault(List<String> source, List<String> fallback) {
+        if (source == null || source.isEmpty()) {
+            return fallback;
+        }
+        return source;
+    }
+
+    private String firstOrDefault(List<String> source, String fallback) {
+        if (source != null) {
+            for (String item : source) {
+                String normalized = safeText(item);
+                if (!normalized.isBlank()) {
+                    return normalized;
+                }
+            }
+        }
+        return safeText(fallback).isBlank() ? "待补充" : safeText(fallback);
+    }
+
+    private Map<String, Object> readJsonMap(String json) {
+        String source = safeText(json);
+        if (source.isBlank()) {
+            return new HashMap<>();
+        }
+        try {
+            return OBJECT_MAPPER.readValue(source, new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            log.warn("Failed to parse json map: {}", e.getMessage());
+            return new HashMap<>();
+        }
+    }
+
+    private String writeJson(Object value) {
+        try {
+            return OBJECT_MAPPER.writeValueAsString(value);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to write json", e);
+        }
+    }
+
+    private String hashText(String content) {
+        String source = safeText(content);
+        if (source.isBlank()) {
+            return "";
+        }
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hashBytes = digest.digest(source.getBytes(StandardCharsets.UTF_8));
+            StringBuilder builder = new StringBuilder(hashBytes.length * 2);
+            for (byte b : hashBytes) {
+                builder.append(String.format("%02x", b));
+            }
+            return builder.toString();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private Map<String, String> parseGateStatusJson(String rawJson) {
+        Map<String, String> loadedDefaults = sdacResourceService == null ? null : sdacResourceService.loadDefaultGateStatuses();
+        Map<String, String> defaultMap = loadedDefaults == null ? new LinkedHashMap<>() : new LinkedHashMap<>(loadedDefaults);
+        if (defaultMap.isEmpty()) {
+            defaultMap.put("REQ", "PENDING");
+            defaultMap.put("UI", "PENDING");
+            defaultMap.put("IMP", "PENDING");
+            defaultMap.put("PREVIEW", "PENDING");
+        }
+
+        String source = safeText(rawJson);
+        if (source.isBlank()) {
+            return defaultMap;
+        }
+        try {
+            Map<String, Object> parsed = OBJECT_MAPPER.readValue(source, new TypeReference<Map<String, Object>>() {});
+            for (Map.Entry<String, Object> entry : parsed.entrySet()) {
+                String key = safeText(entry.getKey()).toUpperCase();
+                if (defaultMap.containsKey(key) && entry.getValue() != null) {
+                    defaultMap.put(key, safeText(entry.getValue().toString()).toUpperCase());
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to parse gate status json, fallback to default map");
+        }
+        return defaultMap;
+    }
+
+    private void updateGateStatus(Conversation conversation, String gate, String status) {
+        if (conversation == null) {
+            return;
+        }
+        Map<String, String> gateStatusMap = parseGateStatusJson(conversation.getGateStatusJson());
+        gateStatusMap.put(safeText(gate).toUpperCase(), safeText(status).toUpperCase());
+        conversation.setGateStatusJson(writeJson(gateStatusMap));
+    }
+
+    private String defaultGateStatusJson() {
+        return writeJson(parseGateStatusJson(""));
+    }
+
     /**
      * 将 Conversation 实体转换为 DTO
      */
@@ -917,12 +1889,20 @@ public class ConversationService {
         dto.setUserRequirement(conversation.getUserRequirement());
         dto.setAiUnderstanding(conversation.getAiUnderstanding());
         dto.setUnderstandingConfirmed(conversation.getUnderstandingConfirmed());
+        dto.setMe2aiContractJson(conversation.getMe2aiContractJson());
+        dto.setMe2aiConfirmedAt(conversation.getMe2aiConfirmedAt());
+        dto.setClarificationQuestionsJson(conversation.getClarificationQuestionsJson());
         dto.setGeneratedCodePath(conversation.getGeneratedCodePath());
         dto.setServiceStatus(conversation.getServiceStatus());
         dto.setPreviewUrl(conversation.getPreviewUrl());
         dto.setUiPrototypePath(conversation.getUiPrototypePath());
         dto.setUiPrototypeContent(conversation.getUiPrototypeContent());
+        dto.setUiSpecJson(conversation.getUiSpecJson());
         dto.setUiConfirmed(conversation.getUiConfirmed());
+        dto.setUiConfirmedAt(conversation.getUiConfirmedAt());
+        dto.setImplementationPlanJson(conversation.getImplementationPlanJson());
+        dto.setEvidenceManifestPath(conversation.getEvidenceManifestPath());
+        dto.setGateStatusJson(conversation.getGateStatusJson());
         dto.setErrorMessage(conversation.getErrorMessage());
         dto.setCreatedAt(conversation.getCreatedAt());
         dto.setUpdatedAt(conversation.getUpdatedAt());

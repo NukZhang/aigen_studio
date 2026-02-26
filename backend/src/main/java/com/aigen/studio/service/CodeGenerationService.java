@@ -50,6 +50,7 @@ public class CodeGenerationService {
     private static final Pattern FRONTEND_API_CALL_PATTERN = Pattern.compile("\\baxios\\s*\\.|\\bfetch\\s*\\(|\\b\\w+\\s*\\.(get|post|put|delete|request)\\s*\\(");
     private static final Pattern FRONTEND_BACKEND_TARGET_PATTERN = Pattern.compile("['\"]\\/api(?:[/'\"?]|$)|baseURL\\s*:\\s*['\"][^'\"]+['\"]");
     private static final Pattern FRONTEND_API_IMPORT_PATTERN = Pattern.compile("from\\s+['\"][^'\"]*api[^'\"]*['\"]");
+    private static final Pattern APP_ROUTER_VIEW_PATTERN = Pattern.compile("<\\s*(?:router-view|routerview)\\b", Pattern.CASE_INSENSITIVE);
 
     @Async
     public void generateCodeForConversationAsync(Long conversationId) {
@@ -286,7 +287,7 @@ public class CodeGenerationService {
 
         Path appVue = srcDir.resolve("App.vue");
         String appContent = readFileSilently(appVue);
-        boolean appHasRouterView = appContent.contains("router-view");
+        boolean appHasRouterView = APP_ROUTER_VIEW_PATTERN.matcher(appContent).find();
         boolean appHasBackendCallHint = FRONTEND_API_CALL_PATTERN.matcher(appContent).find()
                 || FRONTEND_API_IMPORT_PATTERN.matcher(appContent).find();
 

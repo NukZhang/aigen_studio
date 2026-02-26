@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 /**
@@ -40,9 +41,17 @@ public class PromptTaskService {
      * 理解需求
      */
     public String understandRequirement(String userRequirement) {
+        return understandRequirement(userRequirement, null);
+    }
+
+    /**
+     * 理解需求（支持流式回调中间理解内容）
+     */
+    public String understandRequirement(String userRequirement, Consumer<String> assistantProgressConsumer) {
         log.info("Understanding requirement: {}", userRequirement);
 
         StringBuilder result = new StringBuilder();
+        AtomicReference<Throwable> understandingError = new AtomicReference<>(null);
         Path tempDir = Path.of(System.getProperty("java.io.tmpdir"));
 
         // 创建消息处理器
@@ -50,6 +59,9 @@ public class PromptTaskService {
             @Override
             public void onAssistantMessage(String text) {
                 result.append(text);
+                if (assistantProgressConsumer != null && text != null && !text.isBlank()) {
+                    assistantProgressConsumer.accept(text);
+                }
                 log.info("Understanding: {}", text);
             }
 
@@ -71,7 +83,7 @@ public class PromptTaskService {
             @Override
             public void onError(Throwable error) {
                 log.error("Understanding error", error);
-                result.append("\n[理解过程中出现错误: ").append(error.getMessage()).append("]");
+                understandingError.compareAndSet(null, error);
             }
 
             @Override
@@ -82,6 +94,18 @@ public class PromptTaskService {
 
         String taskPrompt = buildUnderstandingPrompt(userRequirement);
         codingService.executeTask(taskPrompt, tempDir, handler);
+
+        if (understandingError.get() != null) {
+            Throwable error = understandingError.get();
+            String message = (error.getMessage() == null || error.getMessage().isBlank())
+                    ? "iFlow understanding failed"
+                    : error.getMessage();
+            throw new RuntimeException(message, error);
+        }
+
+        if (result.isEmpty()) {
+            throw new RuntimeException("iFlow did not return requirement understanding content");
+        }
 
         return result.toString();
     }

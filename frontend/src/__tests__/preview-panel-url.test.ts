@@ -43,7 +43,7 @@ describe('PreviewPanel url resolution', () => {
       configurable: true
     })
 
-    apiMocks.getStatus.mockResolvedValueOnce({
+    apiMocks.getStatus.mockResolvedValue({
       data: {
         conversationId: 1,
         running: true,
@@ -80,7 +80,7 @@ describe('PreviewPanel url resolution', () => {
       configurable: true
     })
 
-    apiMocks.getStatus.mockResolvedValueOnce({
+    apiMocks.getStatus.mockResolvedValue({
       data: {
         conversationId: 1,
         running: true,
@@ -117,7 +117,7 @@ describe('PreviewPanel url resolution', () => {
       configurable: true
     })
 
-    apiMocks.getStatus.mockResolvedValueOnce({
+    apiMocks.getStatus.mockResolvedValue({
       data: {
         conversationId: 1,
         running: true,
@@ -154,7 +154,7 @@ describe('PreviewPanel url resolution', () => {
       configurable: true
     })
 
-    apiMocks.getStatus.mockResolvedValueOnce({
+    apiMocks.getStatus.mockResolvedValue({
       data: {
         conversationId: 1,
         running: false,

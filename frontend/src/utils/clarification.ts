@@ -25,8 +25,8 @@ function normalizeQuestion(raw: any, index: number): ClarificationQuestion | nul
 
   const options = Array.isArray(raw.options)
     ? raw.options
-      .map(option => typeof option === 'string' ? option.trim() : '')
-      .filter(option => option.length > 0)
+      .map((option: unknown) => typeof option === 'string' ? option.trim() : '')
+      .filter((option: string) => option.length > 0)
     : []
 
   return { id, question, options }

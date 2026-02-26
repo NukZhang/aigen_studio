@@ -23,6 +23,11 @@ public enum ConversationStage {
      * 需求理解确认阶段（等待用户确认，内部状态，显示在"理解需求"步骤）
      */
     UNDERSTANDING_CONFIRMED,
+
+    /**
+     * UI 设计阶段（SDAC：需求确认后进入 UI 设计）
+     */
+    UI_DESIGNING,
     
     /**
      * UI 生成阶段（状态栏第3步：生成UI）

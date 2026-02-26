@@ -22,12 +22,20 @@ public class ConversationDTO {
     private String userRequirement;     // 用户输入的需求描述
     private String aiUnderstanding;     // AI 理解的需求
     private Boolean understandingConfirmed;  // 用户是否确认理解内容
+    private String me2aiContractJson;   // 需求契约卡 JSON
+    private LocalDateTime me2aiConfirmedAt; // 契约卡确认时间
+    private String clarificationQuestionsJson; // 澄清问题 JSON
     private String generatedCodePath;   // 生成的代码路径
     private String serviceStatus;       // 服务状态
     private String previewUrl;          // 预览 URL
     private String uiPrototypePath;     // UI 原型路径
     private String uiPrototypeContent;  // UI 原型内容（HTML）
+    private String uiSpecJson;          // UI Spec JSON
     private Boolean uiConfirmed;        // 用户是否确认 UI 设计
+    private LocalDateTime uiConfirmedAt; // UI 确认时间
+    private String implementationPlanJson; // Implementation Plan JSON
+    private String evidenceManifestPath; // Evidence Manifest 路径
+    private String gateStatusJson;      // Gate 状态 JSON
     private String errorMessage;        // 错误信息
     private Integer currentQuestionIndex; // 当前应答题目索引（基于 CLARIFICATION_PAYLOAD.questions）
     private List<String> answeredQuestionIds; // 已回答题目 ID 列表

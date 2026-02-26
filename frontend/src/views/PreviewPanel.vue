@@ -204,24 +204,20 @@ const previewUrl = computed(() => {
 const conversationId = computed(() => props.conversationId)
 
 const fetchStatus = async () => {
-  console.log('[PreviewPanel] fetchStatus called, conversationId:', conversationId.value)
   if (!conversationId.value) {
     status.value = null
     isStartupComplete.value = false
-    console.log('[PreviewPanel] No conversationId, status cleared')
     return
   }
   try {
     const response = await previewApi.getStatus(conversationId.value)
     status.value = response.data
-    console.log('[PreviewPanel] Status fetched:', response.data)
     // 如果预览正在运行但未标记为完成，检查是否应该标记为完成
     if (status.value?.running && !isStartupComplete.value && !isStarting.value) {
       isStartupComplete.value = true
-      console.log('[PreviewPanel] Auto-marked as startup complete')
     }
   } catch (error) {
-    console.error('[PreviewPanel] Failed to fetch preview status:', error)
+    console.error('Failed to fetch preview status:', error)
     // 网络错误时不清空status，保留当前状态
   }
 }
@@ -408,7 +404,6 @@ const cleanup = () => {
 }
 
 watch(conversationId, (newId, oldId) => {
-  console.log('[PreviewPanel] conversationId changed:', { oldId, newId })
   if (newId !== oldId) {
     // 只在conversationId真正改变时清理
     cleanup()
@@ -424,7 +419,6 @@ watch(conversationId, (newId, oldId) => {
 
 // 组件挂载时初始化
 onMounted(() => {
-  console.log('[PreviewPanel] Component mounted, conversationId:', conversationId.value)
   if (conversationId.value) {
     fetchStatus()
   }

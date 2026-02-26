@@ -1,0 +1,91 @@
+{
+  "$id": "Evidence_Manifest.v1",
+  "type": "object",
+  "required": [
+    "inputs",
+    "verifications",
+    "result",
+    "artifacts",
+    "timestamps"
+  ],
+  "properties": {
+    "inputs": {
+      "type": "object",
+      "required": [
+        "me2aiContractHash",
+        "uiSpecHash",
+        "planHash"
+      ],
+      "properties": {
+        "me2aiContractHash": {
+          "type": "string"
+        },
+        "uiSpecHash": {
+          "type": "string"
+        },
+        "planHash": {
+          "type": "string"
+        },
+        "irHash": {
+          "type": "string"
+        }
+      }
+    },
+    "verifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "cmd",
+          "status"
+        ],
+        "properties": {
+          "cmd": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PASS",
+              "FAIL"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          },
+          "logsRef": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "result": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL"
+      ]
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "timestamps": {
+      "type": "object",
+      "required": [
+        "startedAt",
+        "finishedAt"
+      ],
+      "properties": {
+        "startedAt": {
+          "type": "string"
+        },
+        "finishedAt": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

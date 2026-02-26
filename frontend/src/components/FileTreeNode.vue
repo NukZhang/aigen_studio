@@ -2,7 +2,7 @@
   <div class="tree-node" :class="{ selected: isSelected }">
     <div class="node-content" @click="handleToggle">
       <el-icon class="folder-icon" v-if="node.directory">
-        <component :is="isExpanded ? 'FolderOpened' : 'Folder'" />
+        <component :is="isExpanded ? FolderOpened : Folder" />
       </el-icon>
       <el-icon class="file-icon" v-else>
         <component :is="nodeIcon" />
@@ -48,24 +48,24 @@ const emit = defineEmits<{
 
 const nodeIcon = computed(() => {
   if (props.node.directory) {
-    return 'Folder'
+    return Folder
   }
 
-  const typeIcons: Record<string, string> = {
-    javascript: 'Document',
-    java: 'Document',
-    python: 'Document',
-    html: 'Document',
-    css: 'Document',
-    json: 'Document',
-    xml: 'Document',
-    markdown: 'Document',
-    image: 'Picture',
-    pdf: 'Document',
-    archive: 'Folder'
+  const typeIcons: Record<string, unknown> = {
+    javascript: Document,
+    java: Document,
+    python: Document,
+    html: Document,
+    css: Document,
+    json: Document,
+    xml: Document,
+    markdown: Document,
+    image: Picture,
+    pdf: Document,
+    archive: Folder
   }
 
-  return typeIcons[props.node.type || 'unknown'] || 'Document'
+  return typeIcons[props.node.type || 'unknown'] || Document
 })
 
 const isExpanded = computed(() => {

@@ -56,7 +56,7 @@ iflow:
 # GitLab Configuration
 gitlab:
   url: https://git.longhu.net
-  token: ***REMOVED***
+  token: '***REMOVED***'
   base-path: AIGen
   timeout: 600000  # 10 minutes
 
@@ -64,12 +64,47 @@ gitlab:
 tutorial:
   base-path: tutorials
 
+# LangChain4j Configuration (DashScope OpenAI compatible mode)
+langchain4j:
+  open-ai:
+    chat-model:
+      base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      api-key: ${DASHSCOPE_API_KEY:sk-placeholder}
+      model-name: qwen-plus
+      temperature: 0.7
+      max-tokens: 4096
+    embedding-model:
+      base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      api-key: ${DASHSCOPE_API_KEY:sk-placeholder}
+      model-name: text-embedding-v2
+
+# Qdrant Configuration
+qdrant:
+  enabled: false
+  host: localhost
+  port: 6334
+  collection-name: aigen_knowledge
+
 # Prompt templates
 aigen:
+  agent:
+    enable-rag: false
+    enable-multi-agent: false
+    use-langchain: false
   prompt:
     understanding-template: classpath:prompt-templates/understanding-prompt.md
     code-generation-template: classpath:prompt-templates/code-generation-prompt.md
     ui-prototype-template: classpath:prompt-templates/ui-prototype-prompt.md
+  sdac:
+    schemas:
+      ui-spec: classpath:sdac/schemas/ui_spec.v1.schema.json
+      implementation-plan: classpath:sdac/schemas/implementation_plan.v1.schema.json
+      evidence-manifest: classpath:sdac/schemas/evidence_manifest.v1.schema.json
+      preview-contract: classpath:sdac/schemas/preview_contract.v1.schema.json
+    templates:
+      ai2ai-state-update: classpath:sdac/templates/ai2ai_state_update.template.md
+    gates:
+      rules: classpath:sdac/gates/gate_rules.v1.yml
 
 # Logging
 logging:

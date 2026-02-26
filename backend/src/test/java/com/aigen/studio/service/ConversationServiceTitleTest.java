@@ -16,11 +16,15 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.Executor;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -41,6 +45,15 @@ class ConversationServiceTitleTest {
     @Mock
     private UIPrototypeService uiPrototypeService;
 
+    @Mock
+    private PreviewService previewService;
+
+    @Mock
+    private SdacResourceService sdacResourceService;
+
+    @Mock
+    private Executor taskExecutor;
+
     @InjectMocks
     private ConversationService conversationService;
 
@@ -55,15 +68,16 @@ class ConversationServiceTitleTest {
         when(conversationRepository.findById(1L)).thenReturn(Optional.of(conversation));
         when(conversationRepository.save(any(Conversation.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(messageRepository.save(any(Message.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(promptTaskService.understandRequirement(any(String.class))).thenReturn("understood");
-
         MessageDTO userMessage = new MessageDTO();
         userMessage.setContent("我想做一个库存管理系统，支持商品管理和库存预警");
 
-        conversationService.sendMessageToNewConversation(1L, userMessage);
+        MessageDTO response = conversationService.sendMessageToNewConversation(1L, userMessage);
 
-        assertEquals("库存管理系统", conversation.getProjectName());
-        assertEquals(ConversationStage.UNDERSTANDING_CONFIRMED, conversation.getStage());
+        assertEquals("新对话", conversation.getProjectName());
+        assertEquals(ConversationStage.UNDERSTANDING, conversation.getStage());
+        assertTrue(response.getContent().contains("后台理解"));
+        verify(promptTaskService, never()).understandRequirement(any(String.class));
+        verify(taskExecutor, atLeastOnce()).execute(any(Runnable.class));
     }
 
     @Test
@@ -77,8 +91,6 @@ class ConversationServiceTitleTest {
         when(conversationRepository.findById(2L)).thenReturn(Optional.of(conversation));
         when(conversationRepository.save(any(Conversation.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(messageRepository.save(any(Message.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(promptTaskService.understandRequirement(any(String.class))).thenReturn("understood");
-
         MessageDTO userMessage = new MessageDTO();
         userMessage.setContent("帮我做一个任务管理系统");
 
@@ -132,23 +144,13 @@ class ConversationServiceTitleTest {
         when(conversationRepository.findById(5L)).thenReturn(Optional.of(conversation));
         when(conversationRepository.save(any(Conversation.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(messageRepository.save(any(Message.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(promptTaskService.understandRequirement(any(String.class))).thenReturn(
-                "<REQUIREMENT_GATE>\n" +
-                "NEXT_ACTION: ASK_CLARIFICATION\n" +
-                "MISSING_INFO_COUNT: 2\n" +
-                "</REQUIREMENT_GATE>\n\n" +
-                "1. 目标平台是微信还是 H5？\n" +
-                "2. 排行榜按什么规则计分？"
-        );
-
         MessageDTO userMessage = new MessageDTO();
         userMessage.setContent("做一个春节祝福和排行榜小程序");
 
         MessageDTO response = conversationService.sendMessageToNewConversation(5L, userMessage);
 
-        assertEquals(ConversationStage.CLARIFYING, conversation.getStage());
-        assertTrue(response.getContent().contains("还需要确认"));
-        assertTrue(response.getContent().contains("目标平台"));
+        assertEquals(ConversationStage.UNDERSTANDING, conversation.getStage());
+        assertTrue(response.getContent().contains("后台理解"));
     }
 
     @Test
@@ -163,22 +165,16 @@ class ConversationServiceTitleTest {
         when(conversationRepository.findById(6L)).thenReturn(Optional.of(conversation));
         when(conversationRepository.save(any(Conversation.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(messageRepository.save(any(Message.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(promptTaskService.understandRequirement(any(String.class))).thenReturn(
-                "<REQUIREMENT_GATE>\n" +
-                "NEXT_ACTION: READY_FOR_CONFIRM\n" +
-                "MISSING_INFO_COUNT: 0\n" +
-                "</REQUIREMENT_GATE>\n\n" +
-                "已完成需求理解。"
-        );
-
         MessageDTO userMessage = new MessageDTO();
         userMessage.setContent("平台是微信小程序，排行榜按收到祝福数量排名。");
 
-        conversationService.sendMessageToNewConversation(6L, userMessage);
+        MessageDTO response = conversationService.sendMessageToNewConversation(6L, userMessage);
 
-        assertEquals(ConversationStage.UNDERSTANDING_CONFIRMED, conversation.getStage());
+        assertEquals(ConversationStage.UNDERSTANDING, conversation.getStage());
         assertTrue(conversation.getUserRequirement().contains("做一个春节祝福和排行榜小程序"));
         assertTrue(conversation.getUserRequirement().contains("平台是微信小程序"));
+        assertTrue(response.getContent().contains("后台重新理解"));
+        verify(promptTaskService, never()).understandRequirement(any(String.class));
     }
 
     @Test
@@ -217,5 +213,46 @@ class ConversationServiceTitleTest {
 
         assertEquals(1, dto.getCurrentQuestionIndex());
         assertEquals(Set.of("platform"), Set.copyOf(dto.getAnsweredQuestionIds()));
+    }
+
+    @Test
+    void resolvesAllAnsweredQuestionIdsFromSingleBatchClarificationMessage() {
+        Conversation conversation = new Conversation();
+        conversation.setId(8L);
+        conversation.setProjectName("新对话");
+        conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+        conversation.setStage(ConversationStage.CLARIFYING);
+        conversation.setAiUnderstanding(
+                "<REQUIREMENT_GATE>\n" +
+                        "NEXT_ACTION: ASK_CLARIFICATION\n" +
+                        "MISSING_INFO_COUNT: 2\n" +
+                        "</REQUIREMENT_GATE>\n\n" +
+                        "<CLARIFICATION_PAYLOAD>\n" +
+                        "{\n" +
+                        "  \"questions\": [\n" +
+                        "    {\"id\":\"platform\",\"question\":\"请选择目标平台\",\"options\":[\"微信小程序\",\"H5\"]},\n" +
+                        "    {\"id\":\"ranking\",\"question\":\"请选择排行榜规则\",\"options\":[\"按收到量\",\"按发送量\"]}\n" +
+                        "  ]\n" +
+                        "}\n" +
+                        "</CLARIFICATION_PAYLOAD>"
+        );
+
+        Message answeredMessage = new Message();
+        answeredMessage.setId(101L);
+        answeredMessage.setConversationId(8L);
+        answeredMessage.setRole(Message.MessageRole.USER);
+        answeredMessage.setSenderName("用户");
+        answeredMessage.setContent(
+                "澄清回答：请选择目标平台\n答案：微信小程序\n" +
+                        "澄清回答：请选择排行榜规则\n答案：按收到量"
+        );
+
+        when(conversationRepository.findById(8L)).thenReturn(Optional.of(conversation));
+        when(messageRepository.findByConversationIdOrderByCreatedAtAsc(8L)).thenReturn(List.of(answeredMessage));
+
+        ConversationDTO dto = conversationService.getNewConversationById(8L);
+
+        assertEquals(Set.of("platform", "ranking"), Set.copyOf(dto.getAnsweredQuestionIds()));
+        assertEquals(null, dto.getCurrentQuestionIndex());
     }
 }

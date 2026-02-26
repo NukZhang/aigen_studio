@@ -1,0 +1,43 @@
+{
+  "$id": "Preview_Contract.v1",
+  "type": "object",
+  "required": [
+    "previewUrl",
+    "ports",
+    "startSteps",
+    "evidenceRef",
+    "knownLimits"
+  ],
+  "properties": {
+    "previewUrl": {
+      "type": "string"
+    },
+    "ports": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "startSteps": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "evidenceRef": {
+      "type": "string"
+    },
+    "knownLimits": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "testAccounts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

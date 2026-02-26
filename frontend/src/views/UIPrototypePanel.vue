@@ -87,11 +87,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, watch, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Monitor, Document, CircleCheck, Refresh, Loading } from '@element-plus/icons-vue'
 import { uiPrototypeApi } from '../api/ui-prototype'
-import type { ConversationDTO } from '../api/job'
+import type { Conversation } from '../api/job'
 
 interface Props {
   conversationId?: number
@@ -99,7 +99,7 @@ interface Props {
 
 const props = defineProps<Props>()
 
-const conversation = ref<ConversationDTO | null>(null)
+const conversation = ref<Conversation | null>(null)
 const uiHtml = ref<string | null>(null)
 const isConfirming = ref(false)
 const isRegenerating = ref(false)

@@ -10,6 +10,14 @@ export interface TutorialNode {
 export interface TutorialContent {
   path: string
   content: string
+  headings?: TutorialHeading[]
+}
+
+export interface TutorialHeading {
+  text: string
+  level: number
+  anchor: string
+  children?: TutorialHeading[]
 }
 
 /**

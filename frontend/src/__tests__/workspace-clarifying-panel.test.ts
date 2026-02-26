@@ -2,6 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { describe, expect, it, vi } from 'vitest'
 import Workspace from '@/views/Workspace.vue'
+import { workspaceTestStubs } from './helpers/workspace-test-stubs'
 
 vi.mock('marked', () => ({
   marked: (text: string) => text
@@ -35,6 +36,17 @@ vi.mock('@/api/job', () => ({
   }
 }))
 
+vi.mock('@/api/tutorial', () => ({
+  getTutorialTree: vi.fn().mockResolvedValue({ data: [] }),
+  getTutorialContent: vi.fn().mockResolvedValue({
+    data: {
+      path: '',
+      content: '',
+      headings: []
+    }
+  })
+}))
+
 const clarificationUnderstanding = `
 <REQUIREMENT_GATE>
 NEXT_ACTION: ASK_CLARIFICATION
@@ -58,29 +70,29 @@ MISSING_INFO_COUNT: 2
 </CLARIFICATION_PAYLOAD>
 `
 
-const mountWorkspace = async () => {
+type ConversationOverrides = {
+  currentQuestionIndex?: number
+  answeredQuestionIds?: string[]
+}
+
+const mountWorkspace = async (overrides: ConversationOverrides = {}) => {
+  const conversationData = {
+    id: 1,
+    projectName: '春节祝福',
+    stage: 'CLARIFYING',
+    aiUnderstanding: clarificationUnderstanding,
+    currentQuestionIndex: 1,
+    answeredQuestionIds: ['platform'],
+    messages: [],
+    ...overrides
+  }
+
   apiMocks.getNewConversation
     .mockResolvedValueOnce({
-      data: {
-        id: 1,
-        projectName: '春节祝福',
-        stage: 'CLARIFYING',
-        aiUnderstanding: clarificationUnderstanding,
-        currentQuestionIndex: 1,
-        answeredQuestionIds: ['platform'],
-        messages: []
-      }
+      data: conversationData
     })
     .mockResolvedValue({
-      data: {
-        id: 1,
-        projectName: '春节祝福',
-        stage: 'CLARIFYING',
-        aiUnderstanding: clarificationUnderstanding,
-        currentQuestionIndex: 1,
-        answeredQuestionIds: ['platform'],
-        messages: []
-      }
+      data: conversationData
     })
   apiMocks.getActiveConversations.mockResolvedValue({ data: [] })
   apiMocks.sendMessageToNewConversation.mockResolvedValue({
@@ -103,21 +115,7 @@ const mountWorkspace = async () => {
   const wrapper = mount(Workspace, {
     global: {
       plugins: [router],
-      stubs: {
-        'el-button': { template: '<button @click="$emit(\'click\')"><slot /></button>' },
-        'el-icon': { template: '<i><slot /></i>' },
-        'el-drawer': { template: '<div><slot /></div>' },
-        'el-tabs': { template: '<div><slot /></div>' },
-        'el-tab-pane': { template: '<div><slot /></div>' },
-        'el-input': {
-          props: ['modelValue'],
-          template: '<input :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />'
-        },
-        PreviewPanel: { template: '<div />' },
-        FileBrowser: { template: '<div />' },
-        CodeEditor: { template: '<div />' },
-        UIPrototypePanel: { template: '<div />' }
-      }
+      stubs: workspaceTestStubs
     }
   })
 
@@ -126,27 +124,45 @@ const mountWorkspace = async () => {
 }
 
 describe('Workspace clarifying panel', () => {
-  it('renders current clarification question from backend index and sends selected answer', async () => {
-    const wrapper = await mountWorkspace()
+  it('renders all clarification questions and submits batch answers once', async () => {
+    const wrapper = await mountWorkspace({
+      currentQuestionIndex: 0,
+      answeredQuestionIds: []
+    })
 
     const panel = wrapper.find('.clarifying-panel')
     expect(panel.exists()).toBe(true)
+    expect(panel.text()).toContain('请选择目标平台')
     expect(panel.text()).toContain('请选择排行榜规则')
-    expect(panel.text()).not.toContain('请选择目标平台')
+    const optionButtons = wrapper.findAll('.clarifying-option-button')
+    expect(optionButtons.length).toBeGreaterThanOrEqual(4)
 
-    const optionButton = wrapper.find('.clarifying-option-button')
-    expect(optionButton.exists()).toBe(true)
-    expect(optionButton.text()).toContain('按收到量')
+    await optionButtons.find(button => button.text().includes('微信小程序'))?.trigger('click')
+    await optionButtons.find(button => button.text().includes('按收到量'))?.trigger('click')
 
-    await optionButton.trigger('click')
+    const submitButton = wrapper.find('.clarifying-batch-submit')
+    expect(submitButton.exists()).toBe(true)
+    await submitButton.trigger('click')
     await flushPromises()
 
     expect(apiMocks.sendMessageToNewConversation).toHaveBeenCalledWith(
       1,
       expect.objectContaining({
-        content: expect.stringContaining('按收到量'),
-        clarificationQuestionId: 'ranking'
+        content: expect.stringContaining('澄清回答：请选择目标平台\n答案：微信小程序')
       })
     )
+    expect(apiMocks.sendMessageToNewConversation.mock.calls[0][1].content)
+      .toContain('澄清回答：请选择排行榜规则\n答案：按收到量')
+  })
+
+  it('disables batch submit when some questions are unanswered', async () => {
+    const wrapper = await mountWorkspace({
+      currentQuestionIndex: undefined,
+      answeredQuestionIds: ['platform']
+    })
+
+    const submitButton = wrapper.find('.clarifying-batch-submit')
+    expect(submitButton.exists()).toBe(true)
+    expect((submitButton.element as HTMLButtonElement).disabled).toBe(true)
   })
 })

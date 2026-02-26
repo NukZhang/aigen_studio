@@ -2,6 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import Workspace from '@/views/Workspace.vue'
+import { workspaceTestStubs } from './helpers/workspace-test-stubs'
 
 vi.mock('marked', () => ({
   marked: (text: string) => text
@@ -33,6 +34,17 @@ vi.mock('@/api/job', () => ({
     restartPreview: apiMocks.restartPreview,
     getStatus: apiMocks.getStatus
   }
+}))
+
+vi.mock('@/api/tutorial', () => ({
+  getTutorialTree: vi.fn().mockResolvedValue({ data: [] }),
+  getTutorialContent: vi.fn().mockResolvedValue({
+    data: {
+      path: '',
+      content: '',
+      headings: []
+    }
+  })
 }))
 
 const conversationSnapshot = (message: string) => ({
@@ -67,17 +79,7 @@ const createWrapper = async () => {
   const wrapper = mount(Workspace, {
     global: {
       plugins: [router],
-      stubs: {
-        'el-button': { template: '<button><slot /></button>' },
-        'el-icon': { template: '<i><slot /></i>' },
-        'el-drawer': { template: '<div><slot /></div>' },
-        'el-tabs': { template: '<div><slot /></div>' },
-        'el-tab-pane': { template: '<div><slot /></div>' },
-        'el-input': { template: '<textarea />' },
-        PreviewPanel: { template: '<div />' },
-        FileBrowser: { template: '<div />' },
-        CodeEditor: { template: '<div />' }
-      }
+      stubs: workspaceTestStubs
     }
   })
   return { wrapper, router }

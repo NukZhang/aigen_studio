@@ -147,49 +147,57 @@
           <span>需求澄清</span>
         </div>
         <div class="confirm-content">
-          <h4>请先回答当前问题（单题推进）</h4>
-          <div v-if="currentClarificationQuestion" class="clarifying-question-card">
-            <p class="clarifying-question-text">{{ currentClarificationQuestion.question }}</p>
-            <div v-if="currentClarificationQuestion.options.length > 0" class="clarifying-options">
-              <el-button
-                v-for="option in currentClarificationQuestion.options"
-                :key="option"
-                class="clarifying-option-button"
-                size="small"
-                :disabled="isSending || isSubmittingClarification"
-                :loading="isSubmittingClarification"
-                @click="submitClarificationAnswer(option)"
-              >
-                {{ option }}
-              </el-button>
-            </div>
-            <div class="clarifying-custom-answer">
-              <el-input
-                v-model="clarificationCustomAnswer"
-                size="small"
-                placeholder="或输入其他答案"
-                @keyup.enter="submitCustomClarificationAnswer"
-              />
+          <h4>请一次性回答以下澄清问题</h4>
+          <div v-if="unansweredClarificationQuestions.length > 0" class="clarifying-question-list">
+            <div
+              v-for="question in unansweredClarificationQuestions"
+              :key="question.id"
+              class="clarifying-question-card"
+            >
+              <p class="clarifying-question-text">{{ question.question }}</p>
+              <div v-if="question.options.length > 0" class="clarifying-options">
+                <el-button
+                  v-for="option in question.options"
+                  :key="option"
+                  class="clarifying-option-button"
+                  size="small"
+                  :type="(clarificationAnswers[question.id] || '') === option ? 'primary' : 'default'"
+                  :disabled="isSending || isSubmittingClarification"
+                  @click="selectClarificationOption(question.id, option)"
+                >
+                  {{ option }}
+                </el-button>
+              </div>
+              <div class="clarifying-custom-answer">
+                  <el-input
+                    :model-value="clarificationAnswers[question.id] || ''"
+                    size="small"
+                    placeholder="或输入其他答案"
+                    @update:model-value="(value: string | number | undefined) => updateClarificationAnswer(question.id, String(value || ''))"
+                  />
+                </div>
+              </div>
+            <div class="clarifying-batch-actions">
               <el-button
                 type="primary"
                 size="small"
-                class="clarifying-submit-button"
-                :disabled="!clarificationCustomAnswer.trim() || isSending || isSubmittingClarification"
+                class="clarifying-batch-submit"
+                :disabled="!canSubmitClarificationBatch || isSending || isSubmittingClarification"
                 :loading="isSubmittingClarification"
-                @click="submitCustomClarificationAnswer"
+                @click="submitClarificationBatch"
               >
-                提交
+                提交全部澄清
               </el-button>
             </div>
           </div>
-          <p v-else class="clarifying-fallback-hint">请在下方输入补充信息，我会继续澄清。</p>
+          <p v-else class="clarifying-fallback-hint">当前澄清问题已回答完成，正在整理最新理解。</p>
           <h4>当前理解内容：</h4>
           <div class="understanding-text" v-html="renderMarkdown(clarificationDisplayContent)"></div>
         </div>
       </div>
 
       <!-- 理解确认界面 -->
-      <div class="understanding-confirm-panel" v-if="conversation?.stage === 'UNDERSTANDING_CONFIRMED' && conversation.aiUnderstanding">
+      <div class="understanding-confirm-panel" v-if="conversation?.stage === 'UNDERSTANDING_CONFIRMED' && conversation.aiUnderstanding && !conversation.understandingConfirmed">
         <div class="confirm-header">
           <el-icon><Document /></el-icon>
           <span>需求理解确认</span>
@@ -201,7 +209,7 @@
         <div class="confirm-actions">
           <el-button type="primary" size="small" @click="confirmUnderstanding(true)" :loading="isConfirming">
             <el-icon><CircleCheck /></el-icon>
-            确认，生成UI
+            确认需求
           </el-button>
           <el-button size="small" @click="confirmUnderstanding(false)" :loading="isConfirming">
             <el-icon><CircleClose /></el-icon>
@@ -210,23 +218,76 @@
         </div>
       </div>
 
-      <!-- UI 原型确认面板 -->
-      <div class="ui-confirm-panel" v-if="(conversation?.stage === 'UI_GENERATING' || conversation?.stage === 'UI_READY') && conversation.uiPrototypeContent && !conversation.uiConfirmed">
+      <div class="start-ui-design-panel" v-if="conversation?.stage === 'UNDERSTANDING_CONFIRMED' && conversation?.understandingConfirmed">
         <div class="confirm-header">
           <el-icon><Monitor /></el-icon>
-          <span>UI 原型已生成</span>
+          <span>需求已确认</span>
         </div>
         <div class="confirm-content">
-          <p>请在"UI原型"Tab 中预览设计，确认后点击下方按钮开始生成代码。</p>
+          <p>REQ Gate 已通过。点击下方按钮进入 UI 设计阶段。</p>
+        </div>
+        <div class="confirm-actions">
+          <el-button type="primary" size="small" @click="startUiDesign" :loading="isDesigningUI">
+            <el-icon><VideoPlay /></el-icon>
+            开始 UI 设计
+          </el-button>
+        </div>
+      </div>
+
+      <!-- UI 原型确认面板 -->
+      <div class="ui-confirm-panel" v-if="(conversation?.stage === 'UI_DESIGNING' || conversation?.stage === 'UI_GENERATING' || conversation?.stage === 'UI_READY') && conversation.uiPrototypeContent && !conversation.uiConfirmed">
+        <div class="confirm-header">
+          <el-icon><Monitor /></el-icon>
+          <span>UI 设计待确认</span>
+        </div>
+        <div class="confirm-content">
+          <p>请在"UI原型"Tab 中预览设计，确认后进入实现计划阶段。</p>
         </div>
         <div class="confirm-actions">
           <el-button type="primary" size="small" @click="confirmUIPrototype" :loading="isConfirmingUI">
             <el-icon><CircleCheck /></el-icon>
-            确认 UI 设计，生成代码
+            确认 UI 设计
           </el-button>
           <el-button size="small" @click="regenerateUIPrototype" :loading="isRegeneratingUI">
             <el-icon><Refresh /></el-icon>
             重新生成 UI
+          </el-button>
+        </div>
+      </div>
+
+      <div class="implementation-plan-panel" v-if="conversation?.stage === 'UI_CONFIRMED' || (conversation?.stage === 'CODE_GENERATING' && implementationPlan)">
+        <div class="confirm-header">
+          <el-icon><Document /></el-icon>
+          <span>实现计划与验证</span>
+        </div>
+        <div class="confirm-content">
+          <p v-if="conversation?.stage === 'UI_CONFIRMED'">UI Gate 已通过。请生成 Implementation Plan。</p>
+          <p v-else>Implementation Plan 已生成，下一步执行验证并产出 Evidence。</p>
+          <div v-if="implementationPlan" class="implementation-summary">
+            <p>Scope：{{ (implementationPlan.scope || []).join('；') }}</p>
+            <p>Verifications：{{ (implementationPlan.verifications || []).join('；') }}</p>
+          </div>
+        </div>
+        <div class="confirm-actions">
+          <el-button
+            v-if="conversation?.stage === 'UI_CONFIRMED'"
+            type="primary"
+            size="small"
+            @click="createImplementationPlan"
+            :loading="isPlanningImplementation"
+          >
+            <el-icon><VideoPlay /></el-icon>
+            生成实现计划
+          </el-button>
+          <el-button
+            v-else
+            type="primary"
+            size="small"
+            @click="verifyImplementation"
+            :loading="isVerifyingImplementation"
+          >
+            <el-icon><CircleCheck /></el-icon>
+            生成 Evidence
           </el-button>
         </div>
       </div>
@@ -446,7 +507,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick, computed, watch } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, nextTick, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -468,7 +529,8 @@ import {
   Close,
   Loading,
   EditPen,
-  QuestionFilled
+  QuestionFilled,
+  Refresh
 } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
@@ -502,12 +564,17 @@ interface ToolCall {
 interface Conversation {
   id: number
   projectName: string
+  createdAt?: string
   stage?: string
   aiUnderstanding?: string
+  understandingConfirmed?: boolean
   currentQuestionIndex?: number | null
   answeredQuestionIds?: string[]
   uiPrototypeContent?: string
+  uiSpecJson?: string
   uiConfirmed?: boolean
+  implementationPlanJson?: string
+  evidenceManifestPath?: string
   generatedCodePath?: string
   messages: Message[]
 }
@@ -520,8 +587,11 @@ const isSending = ref(false)
 const isConfirming = ref(false)
 const isSubmittingClarification = ref(false)
 const isStartingPreview = ref(false)
+const isDesigningUI = ref(false)
 const isConfirmingUI = ref(false)
 const isRegeneratingUI = ref(false)
+const isPlanningImplementation = ref(false)
+const isVerifyingImplementation = ref(false)
 const activeTab = ref('preview')
 const chatHistoryRef = ref<HTMLElement | null>(null)
 const selectedFile = ref<FileNode | null>(null)
@@ -536,10 +606,6 @@ const tutorialHeadings = ref<any[]>([])
 const currentTutorialContent = ref('')
 const tutorialLoading = ref(false)
 const tutorialPreviewRef = ref<HTMLElement | null>(null)
-const tutorialTreeProps = {
-  children: 'children',
-  label: 'name'
-}
 const headingTreeProps = {
   children: 'children',
   label: 'text'
@@ -548,21 +614,23 @@ const autoRefreshTimer = ref<number | null>(null)
 
 // 模型选择相关 - 前端固定模型列表
 const availableModels = ref<Model[]>([
-  { id: 'glm-4.7', name: 'GLM-4.7', description: '推荐' },
-  { id: 'iflow-rome-30ba3b', name: 'iFlow-ROME-30BA3B', description: '预览版' },
-  { id: 'deepseek-v3.2', name: 'DeepSeek-V3.2', description: '' },
-  { id: 'qwen3-coder-plus', name: 'Qwen3-Coder-Plus', description: '' },
-  { id: 'kimi-k2-thinking', name: 'Kimi-K2-Thinking', description: '' },
-  { id: 'minimax-m2.1', name: 'MiniMax-M2.1', description: '' },
-  { id: 'kimi-k2-0905', name: 'Kimi-K2-0905', description: '' }
+  { id: 'glm-4.7', name: 'GLM-4.7', description: '推荐', isDefault: true, type: 'chat' },
+  { id: 'iflow-rome-30ba3b', name: 'iFlow-ROME-30BA3B', description: '预览版', isDefault: false, type: 'chat' },
+  { id: 'deepseek-v3.2', name: 'DeepSeek-V3.2', description: '', isDefault: false, type: 'chat' },
+  { id: 'qwen3-coder-plus', name: 'Qwen3-Coder-Plus', description: '', isDefault: false, type: 'chat' },
+  { id: 'kimi-k2-thinking', name: 'Kimi-K2-Thinking', description: '', isDefault: false, type: 'chat' },
+  { id: 'minimax-m2.1', name: 'MiniMax-M2.1', description: '', isDefault: false, type: 'chat' },
+  { id: 'kimi-k2-0905', name: 'Kimi-K2-0905', description: '', isDefault: false, type: 'chat' }
 ])
 const selectedModel = ref<Model | null>(availableModels.value[0])
 const uploadRef = ref()
 const uploadedFiles = ref<File[]>([])
 const isLoadingConversation = ref(false)
-const clarificationCustomAnswer = ref('')
+const clarificationAnswers = reactive<Record<string, string>>({})
+const implementationPlan = ref<Record<string, any> | null>(null)
 const AUTO_REFRESH_INTERVAL = 3000
 const conversationFileStages = new Set([
+  'UI_DESIGNING',
   'UI_GENERATING',
   'UI_READY',
   'UI_CONFIRMED',
@@ -597,6 +665,7 @@ const stageLabelMap: Record<string, string> = {
   UNDERSTANDING: '理解需求',
   CLARIFYING: '理解需求',
   UNDERSTANDING_CONFIRMED: '理解需求',
+  UI_DESIGNING: '生成UI',
   UI_GENERATING: '生成UI',
   UI_READY: '生成UI',
   UI_CONFIRMED: '生成UI',
@@ -606,25 +675,6 @@ const stageLabelMap: Record<string, string> = {
   PREVIEWING: '确认启动',
   COMPLETED: '确认启动',
   FAILED: '生成失败'
-}
-
-// 内部状态到显示阶段的映射
-const getDisplayStage = (internalStage: string | null | undefined): string => {
-  if (!internalStage) return 'NEED_INPUT'
-  switch (internalStage) {
-    case 'CLARIFYING':
-    case 'UNDERSTANDING_CONFIRMED':
-      return 'UNDERSTANDING'  // 确认理解仍显示在"理解需求"步骤
-    case 'UI_READY':
-    case 'UI_CONFIRMED':
-      return 'UI_GENERATING'  // 确认UI仍显示在"生成UI"步骤
-    case 'SERVICE_STARTING':
-    case 'PREVIEWING':
-    case 'COMPLETED':
-      return 'READY_TO_START'  // 这些状态显示在"确认启动"步骤
-    default:
-      return internalStage
-  }
 }
 
 const displayStages = computed(() => {
@@ -645,7 +695,7 @@ const normalizeStageForProgress = (stage?: string | null) => {
   if (stage === 'CLARIFYING' || stage === 'UNDERSTANDING_CONFIRMED') {
     return 'UNDERSTANDING'
   }
-  if (stage === 'UI_READY' || stage === 'UI_CONFIRMED') {
+  if (stage === 'UI_DESIGNING' || stage === 'UI_READY' || stage === 'UI_CONFIRMED') {
     return 'UI_GENERATING'
   }
   if (stage === 'SERVICE_STARTING' || stage === 'PREVIEWING' || stage === 'COMPLETED' || stage === 'FAILED') {
@@ -688,19 +738,22 @@ const clarificationPayload = computed(() => {
   return parseClarificationPayload(conversation.value?.aiUnderstanding)
 })
 
-const currentClarificationQuestion = computed(() => {
+const unansweredClarificationQuestions = computed(() => {
   const payload = clarificationPayload.value
   if (!payload || payload.questions.length === 0) {
-    return null
-  }
-
-  const currentIndex = conversation.value?.currentQuestionIndex
-  if (typeof currentIndex === 'number' && currentIndex >= 0 && currentIndex < payload.questions.length) {
-    return payload.questions[currentIndex]
+    return []
   }
 
   const answeredIds = new Set(conversation.value?.answeredQuestionIds ?? [])
-  return payload.questions.find(question => !answeredIds.has(question.id)) ?? null
+  return payload.questions.filter(question => !answeredIds.has(question.id))
+})
+
+const canSubmitClarificationBatch = computed(() => {
+  const pendingQuestions = unansweredClarificationQuestions.value
+  if (pendingQuestions.length === 0) {
+    return false
+  }
+  return pendingQuestions.every(question => (clarificationAnswers[question.id] || '').trim().length > 0)
 })
 
 const clarificationDisplayContent = computed(() => {
@@ -772,6 +825,7 @@ const loadNewConversation = async (id: number, autoScroll: boolean = true) => {
     const previousCount = conversation.value?.messages.length ?? 0
     const response = await conversationApi.getNewConversation(id)
     conversation.value = response.data
+    implementationPlan.value = parseJsonContent(conversation.value?.implementationPlanJson)
     isEditingTitle.value = false
     editingTitle.value = ''
     await nextTick()
@@ -890,36 +944,44 @@ const sendMessageToNewConversation = async (content: string, clarificationQuesti
   }
 }
 
-const submitClarificationAnswer = async (answer: string) => {
-  const normalizedAnswer = answer.trim()
-  if (!normalizedAnswer || !conversationId.value || !conversation.value) {
+const updateClarificationAnswer = (questionId: string, answer: string) => {
+  clarificationAnswers[questionId] = answer
+}
+
+const selectClarificationOption = (questionId: string, option: string) => {
+  clarificationAnswers[questionId] = option
+}
+
+const submitClarificationBatch = async () => {
+  if (!conversationId.value || !conversation.value) {
+    return
+  }
+  if (!canSubmitClarificationBatch.value) {
     return
   }
   if (isSending.value || isSubmittingClarification.value) {
     return
   }
 
-  const questionId = currentClarificationQuestion.value?.id
-  const question = currentClarificationQuestion.value?.question ?? ''
-  const messageContent = question
-    ? `澄清回答：${question}\n答案：${normalizedAnswer}`
-    : normalizedAnswer
+  const pendingQuestions = unansweredClarificationQuestions.value
+  const messageContent = pendingQuestions
+    .map(question => `澄清回答：${question.question}\n答案：${(clarificationAnswers[question.id] || '').trim()}`)
+    .join('\n')
+    .trim()
+
+  if (!messageContent) {
+    return
+  }
 
   isSubmittingClarification.value = true
   try {
-    await sendMessageToNewConversation(messageContent, questionId)
-    clarificationCustomAnswer.value = ''
+    await sendMessageToNewConversation(messageContent)
+    pendingQuestions.forEach(question => {
+      delete clarificationAnswers[question.id]
+    })
   } finally {
     isSubmittingClarification.value = false
   }
-}
-
-const submitCustomClarificationAnswer = async () => {
-  const answer = clarificationCustomAnswer.value.trim()
-  if (!answer) {
-    return
-  }
-  await submitClarificationAnswer(answer)
 }
 
 const confirmUnderstanding = async (confirmed: boolean) => {
@@ -928,13 +990,14 @@ const confirmUnderstanding = async (confirmed: boolean) => {
   isConfirming.value = true
 
   try {
-    await conversationApi.confirmUnderstanding(conversationId.value, confirmed)
+    const confirmApi = (conversationApi as any).confirmUnderstandingSdac || conversationApi.confirmUnderstanding
+    await confirmApi(conversationId.value, confirmed)
 
     // 重新加载对话
     await loadNewConversation(conversationId.value)
 
     if (confirmed) {
-      ElMessage.success('已确认，开始生成代码...')
+      ElMessage.success('需求已确认，可进入 UI 设计阶段')
     } else {
       ElMessage.info('请告诉我需要修改的地方')
     }
@@ -949,13 +1012,38 @@ const confirmUnderstanding = async (confirmed: boolean) => {
   }
 }
 
+const startUiDesign = async () => {
+  if (!conversationId.value) return
+  isDesigningUI.value = true
+  try {
+    const designApi = (conversationApi as any).designUi
+    if (!designApi) {
+      ElMessage.error('当前版本不支持 UI 设计 API')
+      return
+    }
+    await designApi(conversationId.value)
+    await loadNewConversation(conversationId.value)
+    ElMessage.success('已进入 UI 设计阶段')
+  } catch (error) {
+    console.error('Failed to start UI design:', error)
+    ElMessage.error('启动 UI 设计失败，请稍后重试')
+  } finally {
+    isDesigningUI.value = false
+  }
+}
+
 const confirmUIPrototype = async () => {
   if (!conversationId.value) return
   isConfirmingUI.value = true
   try {
-    await uiPrototypeApi.confirmUIPrototype(conversationId.value)
+    const confirmUiApi = (conversationApi as any).confirmUiDesign
+    if (confirmUiApi) {
+      await confirmUiApi(conversationId.value)
+    } else {
+      await uiPrototypeApi.confirmUIPrototype(conversationId.value)
+    }
     await loadNewConversation(conversationId.value)
-    ElMessage.success('UI 设计已确认，开始生成代码...')
+    ElMessage.success('UI 设计已确认')
   } catch (error) {
     console.error('Failed to confirm UI prototype:', error)
     ElMessage.error('确认失败，请稍后重试')
@@ -964,14 +1052,69 @@ const confirmUIPrototype = async () => {
   }
 }
 
+const createImplementationPlan = async () => {
+  if (!conversationId.value) return
+  isPlanningImplementation.value = true
+  try {
+    const planApi = (conversationApi as any).createImplementationPlan
+    if (!planApi) {
+      ElMessage.error('当前版本不支持 Implementation Plan API')
+      return
+    }
+    const response = await planApi(conversationId.value)
+    implementationPlan.value = response.data
+    await loadNewConversation(conversationId.value)
+    ElMessage.success('Implementation Plan 已生成')
+  } catch (error) {
+    console.error('Failed to create implementation plan:', error)
+    ElMessage.error('生成实现计划失败，请稍后重试')
+  } finally {
+    isPlanningImplementation.value = false
+  }
+}
+
+const verifyImplementation = async () => {
+  if (!conversationId.value) return
+  isVerifyingImplementation.value = true
+  try {
+    const verifyApi = (conversationApi as any).verifyImplementation
+    if (!verifyApi) {
+      ElMessage.error('当前版本不支持验证 API')
+      return
+    }
+    const verifications = (implementationPlan.value?.verifications || []).map((cmd: string) => ({
+      cmd,
+      status: 'PASS',
+      summary: 'manual verify pass'
+    }))
+    const response = await verifyApi(conversationId.value, {
+      passed: true,
+      verifications,
+      artifacts: ['workspace/manual-verification']
+    })
+    await loadNewConversation(conversationId.value)
+    if (response.data?.result === 'PASS') {
+      ElMessage.success('Evidence 已生成，可启动预览')
+    } else {
+      ElMessage.warning('验证失败，但 Evidence 已生成')
+    }
+  } catch (error) {
+    console.error('Failed to verify implementation:', error)
+    ElMessage.error('验证失败，请稍后重试')
+  } finally {
+    isVerifyingImplementation.value = false
+  }
+}
+
 const regenerateUIPrototype = async () => {
   if (!conversationId.value) return
+  const targetConversationId = conversationId.value
   isRegeneratingUI.value = true
   try {
-    await uiPrototypeApi.regenerateUIPrototype(conversationId.value)
+    await uiPrototypeApi.regenerateUIPrototype(targetConversationId)
     ElMessage.success('UI 原型重新生成中...')
     setTimeout(() => {
-      loadNewConversation(conversationId.value)
+      loadNewConversation(targetConversationId)
     }, 2000)
   } catch (error) {
     console.error('Failed to regenerate UI prototype:', error)
@@ -985,7 +1128,17 @@ const startPreviewFromConfirm = async () => {
   if (!conversationId.value) return
   isStartingPreview.value = true
   try {
-    await previewApi.startPreview(conversationId.value)
+    const previewApiWithEvidence = (conversationApi as any).startPreviewWithEvidence
+    if (previewApiWithEvidence) {
+      const evidenceRef = conversation.value?.evidenceManifestPath
+      if (!evidenceRef) {
+        ElMessage.error('缺少 Evidence，无法通过 Preview Gate')
+        return
+      }
+      await previewApiWithEvidence(conversationId.value, evidenceRef)
+    } else {
+      await previewApi.startPreview(conversationId.value)
+    }
     await loadNewConversation(conversationId.value)
     activeTab.value = 'preview'
     ElMessage.success('预览已启动')
@@ -1022,7 +1175,7 @@ const sendMessage = async () => {
 }
 
 const handleModelChange = (modelId: string) => {
-  const model = availableModels.find(m => m.id === modelId)
+  const model = availableModels.value.find((m) => m.id === modelId)
   if (model) {
     selectedModel.value = model
     ElMessage.success(`已切换到 ${model.name}`)
@@ -1048,9 +1201,18 @@ const handleFileSelected = (node: FileNode) => {
   }
 }
 
+const parseJsonContent = (raw?: string | null) => {
+  if (!raw || !raw.trim()) return null
+  try {
+    return JSON.parse(raw)
+  } catch (error) {
+    return null
+  }
+}
+
 const renderMarkdown = (content: string) => {
   try {
-    const html = marked.parse(content ?? '')
+    const html = marked.parse(content ?? '', { async: false }) as string
     return DOMPurify.sanitize(html, {
       FORBID_TAGS: ['style', 'script', 'iframe'],
       FORBID_ATTR: ['style', 'on*']
@@ -1060,7 +1222,8 @@ const renderMarkdown = (content: string) => {
   }
 }
 
-const formatTime = (timestamp: string) => {
+const formatTime = (timestamp?: string | null) => {
+  if (!timestamp) return ''
   try {
     const date = new Date(timestamp)
     return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
@@ -1102,7 +1265,8 @@ const selectConversation = async (conv: Conversation) => {
   await loadNewConversation(conv.id)
 }
 
-const getStageLabel = (stage: string) => {
+const getStageLabel = (stage?: string | null) => {
+  if (!stage) return ''
   return stageLabelMap[stage] || stage
 }
 
@@ -1164,9 +1328,9 @@ const handleHeadingClick = (data: any) => {
 
 const renderedTutorialContent = computed(() => {
   if (!currentTutorialContent.value) return ''
-  const html = marked(currentTutorialContent.value)
+  const html = marked.parse(currentTutorialContent.value, { async: false }) as string
   // 为标题添加锚点 ID
-  return html.replace(/<h([1-6])>(.*?)<\/h\1>/g, (match, level, text) => {
+  return html.replace(/<h([1-6])>(.*?)<\/h\1>/g, (_match: string, level: string, text: string) => {
     const anchor = generateAnchorFromText(text)
     return `<h${level} id="${anchor}">${text}</h${level}>`
   })
@@ -1600,6 +1764,8 @@ onUnmounted(() => {
 /* 理解确认界面 */
 .clarifying-panel,
 .understanding-confirm-panel,
+.start-ui-design-panel,
+.implementation-plan-panel,
 .start-confirm-panel {
   padding: 16px 20px;
   border-top: 1px solid #3a3a3a;
@@ -1640,6 +1806,20 @@ onUnmounted(() => {
 .confirm-actions {
   display: flex;
   gap: 12px;
+}
+
+.implementation-summary {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background-color: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  color: #cbd5e1;
+  font-size: 12px;
+}
+
+.implementation-summary p {
+  margin: 4px 0;
 }
 
 .clarifying-question-card {

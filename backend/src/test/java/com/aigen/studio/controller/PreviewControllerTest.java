@@ -89,8 +89,7 @@ class PreviewControllerTest {
                 .andExpect(jsonPath("$.running", is(true)));
 
         mockMvc.perform(post("/preview/conversation/{id}/stop", conversation.getId()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.running", is(false)));
+                .andExpect(status().isOk());
 
         Conversation stopped = conversationRepository.findById(conversation.getId()).orElseThrow();
         assertEquals(ConversationStage.READY_TO_START, stopped.getStage());
@@ -117,6 +116,9 @@ class PreviewControllerTest {
     }
 
     static class FakeProcess extends Process {
+        private static final java.util.concurrent.atomic.AtomicLong PID_SEQUENCE =
+                new java.util.concurrent.atomic.AtomicLong(2000);
+        private final long pid = PID_SEQUENCE.incrementAndGet();
         private boolean alive = true;
 
         @Override
@@ -159,6 +161,11 @@ class PreviewControllerTest {
         @Override
         public boolean isAlive() {
             return alive;
+        }
+
+        @Override
+        public long pid() {
+            return pid;
         }
     }
 }

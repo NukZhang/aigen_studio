@@ -1,0 +1,56 @@
+{
+  "$id": "Implementation_Plan.v1",
+  "type": "object",
+  "required": [
+    "scope",
+    "nonGoals",
+    "filesToChange",
+    "verifications"
+  ],
+  "properties": {
+    "scope": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "nonGoals": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "filesToChange": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "apiChanges": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "dbChanges": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "verifications": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "evidenceExpected": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

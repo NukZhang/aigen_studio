@@ -234,6 +234,7 @@ public class IFlowClientHelper implements ICodingService {
             log.info("Receiving messages from iFlow...");
             long taskStartAt = System.currentTimeMillis();
             long firstResponseTimeout = resolveFirstResponseTimeout(timeout);
+            long absoluteExecutionTimeout = resolveAbsoluteExecutionTimeout(timeout, firstResponseTimeout);
             int promptLength = taskPrompt == null ? 0 : taskPrompt.length();
             int promptHash = taskPrompt == null ? 0 : taskPrompt.hashCode();
             boolean mentionsPencilUiDesign = taskPrompt != null && taskPrompt.contains("pencil-ui-design");
@@ -252,11 +253,11 @@ public class IFlowClientHelper implements ICodingService {
             AtomicBoolean skillInvocationDetected = new AtomicBoolean(false);
 
             log.info(
-                    "iFlow task metadata: promptLength={}, promptHash={}, mentionsPencilUiDesign={}, firstResponseTimeoutMs={}, inactivityTimeoutMs={}, toolInactivityTimeoutMs={}, skillInactivityTimeoutMs={}",
-                    promptLength, promptHash, mentionsPencilUiDesign, firstResponseTimeout, timeout, toolInactivityTimeoutMillis, skillInactivityTimeoutMillis
+                    "iFlow task metadata: promptLength={}, promptHash={}, mentionsPencilUiDesign={}, firstResponseTimeoutMs={}, inactivityTimeoutMs={}, absoluteExecutionTimeoutMs={}, toolInactivityTimeoutMs={}, skillInactivityTimeoutMs={}",
+                    promptLength, promptHash, mentionsPencilUiDesign, firstResponseTimeout, timeout, absoluteExecutionTimeout, toolInactivityTimeoutMillis, skillInactivityTimeoutMillis
             );
 
-            client.receiveMessages()
+            Flux<Message> taskMessageStream = client.receiveMessages()
                     .doOnNext(message -> {
                         rawMessages.incrementAndGet();
 
@@ -336,8 +337,48 @@ public class IFlowClientHelper implements ICodingService {
                         ));
                         handler.onComplete();
                         return Flux.empty();
-                    })
-                    .blockLast(); // 等待流完成
+                    });
+
+            try {
+                taskMessageStream.blockLast(Duration.ofMillis(absoluteExecutionTimeout)); // 等待流完成
+            } catch (IllegalStateException e) {
+                if (isBlockingReadTimeout(e)) {
+                    long now = System.currentTimeMillis();
+                    long elapsed = now - taskStartAt;
+                    long firstTaskMessageDelay = firstTaskMessageAt.get() > 0 ? firstTaskMessageAt.get() - taskStartAt : -1L;
+                    log.warn(
+                            "iFlow task timed out: phase=absolute_execution_timeout, elapsedMs={}, absoluteExecutionTimeoutMs={}, firstTaskMessageDelayMs={}, taskMessages={}, rawMessages={}, nonTaskMessages={}, assistantMessages={}, toolCallMessages={}, toolResultMessages={}, taskFinishMessages={}, firstTaskMessageType={}, lastTaskMessageType={}, toolActivityDetected={}, skillInvocationDetected={}, promptLength={}, promptHash={}, mentionsPencilUiDesign={}",
+                            elapsed,
+                            absoluteExecutionTimeout,
+                            firstTaskMessageDelay,
+                            taskMessages.get(),
+                            rawMessages.get(),
+                            nonTaskMessages.get(),
+                            assistantMessages.get(),
+                            toolCallMessages.get(),
+                            toolResultMessages.get(),
+                            taskFinishMessages.get(),
+                            firstTaskMessageType.get(),
+                            lastTaskMessageType.get(),
+                            toolActivityDetected.get(),
+                            skillInvocationDetected.get(),
+                            promptLength,
+                            promptHash,
+                            mentionsPencilUiDesign
+                    );
+                    handler.onError(new java.util.concurrent.TimeoutException(
+                            "iFlow stream timeout phase=absolute_execution_timeout"
+                                    + ", elapsedMs=" + elapsed
+                                    + ", absoluteExecutionTimeoutMs=" + absoluteExecutionTimeout
+                                    + ", firstTaskMessageDelayMs=" + firstTaskMessageDelay
+                                    + ", taskMessages=" + taskMessages.get()
+                                    + ", rawMessages=" + rawMessages.get()
+                    ));
+                    handler.onComplete();
+                    return;
+                }
+                throw e;
+            }
 
             long finishedAt = System.currentTimeMillis();
             long totalElapsed = finishedAt - taskStartAt;
@@ -396,6 +437,41 @@ public class IFlowClientHelper implements ICodingService {
             return buffer;
         }
         return timeout + buffer;
+    }
+
+    long resolveAbsoluteExecutionTimeout(long timeout, long firstResponseTimeout) {
+        long normalizedTimeout = timeout > 0 ? timeout : timeoutMillis;
+        long normalizedFirstResponseTimeout = firstResponseTimeout > 0
+                ? firstResponseTimeout
+                : resolveFirstResponseTimeout(normalizedTimeout);
+        long remainingExecutionWindow = Math.max(normalizedTimeout, 1000L);
+        return safeAdd(normalizedFirstResponseTimeout, remainingExecutionWindow);
+    }
+
+    private long safeAdd(long left, long right) {
+        if (left > Long.MAX_VALUE - right) {
+            return Long.MAX_VALUE;
+        }
+        return left + right;
+    }
+
+    boolean isBlockingReadTimeout(Throwable error) {
+        if (error == null) {
+            return false;
+        }
+
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof java.util.concurrent.TimeoutException) {
+                return true;
+            }
+            String message = current.getMessage();
+            if (message != null && message.contains("Timeout on blocking read")) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     String describeTimeoutPhase(int totalMessages, long firstMessageAt, long lastMessageAt) {

@@ -28,15 +28,55 @@ export interface Conversation {
   userRequirement?: string
   aiUnderstanding?: string
   understandingConfirmed?: boolean
+  me2aiContractJson?: string
+  me2aiConfirmedAt?: string
+  clarificationQuestionsJson?: string
   generatedCodePath?: string
   serviceStatus?: string
   previewUrl?: string
+  uiPrototypePath?: string
+  uiPrototypeContent?: string
+  uiSpecJson?: string
+  uiConfirmed?: boolean
+  uiConfirmedAt?: string
+  implementationPlanJson?: string
+  evidenceManifestPath?: string
+  gateStatusJson?: string
   errorMessage?: string
   currentQuestionIndex?: number | null
   answeredQuestionIds?: string[]
   createdAt: string
   updatedAt: string
   messages: Message[]
+}
+
+export interface UiDesignResponse {
+  conversation: Conversation
+  uiSpec: Record<string, any>
+  prototypePath?: string
+  prototypeUrl?: string
+}
+
+export interface ImplementationVerifyRequest {
+  passed?: boolean
+  verifications?: Array<{
+    cmd: string
+    status: 'PASS' | 'FAIL'
+    summary?: string
+    logsRef?: string
+  }>
+  artifacts?: string[]
+}
+
+export interface ImplementationVerifyResponse {
+  result: 'PASS' | 'FAIL'
+  manifestPath: string
+  verifications: Array<{
+    cmd: string
+    status: 'PASS' | 'FAIL'
+    summary?: string
+    logsRef?: string
+  }>
 }
 
 export interface FileNode {
@@ -109,6 +149,41 @@ export const conversationApi = {
     return api.post<Conversation>(`/conversations/new/${conversationId}/confirm`, {
       confirmed,
       feedback
+    })
+  },
+
+  parseUnderstanding: (conversationId: number) => {
+    return api.post<{ nextAction: string, questions?: any[], contract?: Record<string, any> }>(
+      `/conversations/${conversationId}/understanding/parse`
+    )
+  },
+
+  confirmUnderstandingSdac: (conversationId: number, confirmed: boolean, feedback?: string) => {
+    return api.post<Conversation>(`/conversations/${conversationId}/understanding/confirm`, {
+      confirmed,
+      feedback
+    })
+  },
+
+  designUi: (conversationId: number) => {
+    return api.post<UiDesignResponse>(`/conversations/${conversationId}/ui/design`)
+  },
+
+  confirmUiDesign: (conversationId: number) => {
+    return api.post<Conversation>(`/conversations/${conversationId}/ui/confirm`)
+  },
+
+  createImplementationPlan: (conversationId: number) => {
+    return api.post<Record<string, any>>(`/conversations/${conversationId}/implementation/plan`)
+  },
+
+  verifyImplementation: (conversationId: number, request: ImplementationVerifyRequest) => {
+    return api.post<ImplementationVerifyResponse>(`/conversations/${conversationId}/implementation/verify`, request)
+  },
+
+  startPreviewWithEvidence: (conversationId: number, evidenceRef: string) => {
+    return api.post<PreviewStatus>(`/conversations/${conversationId}/preview/start`, {
+      evidenceRef
     })
   }
 }

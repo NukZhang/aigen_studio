@@ -15,6 +15,34 @@ export default defineConfig(({ mode }) => {
         'vue': 'vue/dist/vue.esm-bundler.js'
       }
     },
+    build: {
+      chunkSizeWarningLimit: 900,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (!id.includes('node_modules')) {
+              return
+            }
+            if (id.includes('monaco-editor')) {
+              return 'vendor-monaco'
+            }
+            if (id.includes('@element-plus/icons-vue')) {
+              return 'vendor-ep-icons'
+            }
+            if (id.includes('element-plus')) {
+              return 'vendor-element-plus'
+            }
+            if (id.includes('vue') || id.includes('vue-router') || id.includes('pinia')) {
+              return 'vendor-vue'
+            }
+            if (id.includes('marked') || id.includes('dompurify')) {
+              return 'vendor-content'
+            }
+            return 'vendor-misc'
+          }
+        }
+      }
+    },
     server: {
       port: 3000,
       proxy: {

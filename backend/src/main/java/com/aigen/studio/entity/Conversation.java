@@ -63,6 +63,24 @@ public class Conversation {
     private Boolean understandingConfirmed;
 
     /**
+     * Me2AI 契约卡（JSON）
+     */
+    @Column(name = "me2ai_contract_json", columnDefinition = "TEXT")
+    private String me2aiContractJson;
+
+    /**
+     * Me2AI 契约卡确认时间
+     */
+    @Column(name = "me2ai_confirmed_at")
+    private LocalDateTime me2aiConfirmedAt;
+
+    /**
+     * 澄清问题（JSON）
+     */
+    @Column(name = "clarification_questions_json", columnDefinition = "TEXT")
+    private String clarificationQuestionsJson;
+
+    /**
      * 生成的代码路径
      */
     @Column(name = "generated_code_path")
@@ -93,10 +111,40 @@ public class Conversation {
     private String uiPrototypeContent;
 
     /**
+     * UI 规格（JSON）
+     */
+    @Column(name = "ui_spec_json", columnDefinition = "TEXT")
+    private String uiSpecJson;
+
+    /**
      * 用户是否确认 UI 设计
      */
     @Column(name = "ui_confirmed")
     private Boolean uiConfirmed;
+
+    /**
+     * UI 设计确认时间
+     */
+    @Column(name = "ui_confirmed_at")
+    private LocalDateTime uiConfirmedAt;
+
+    /**
+     * Implementation Plan（JSON）
+     */
+    @Column(name = "implementation_plan_json", columnDefinition = "TEXT")
+    private String implementationPlanJson;
+
+    /**
+     * Evidence Manifest 路径
+     */
+    @Column(name = "evidence_manifest_path")
+    private String evidenceManifestPath;
+
+    /**
+     * Gate 状态（JSON）
+     */
+    @Column(name = "gate_status_json", columnDefinition = "TEXT")
+    private String gateStatusJson;
 
     /**
      * 错误信息
@@ -154,6 +202,8 @@ public class Conversation {
         conversation.setStatus(ConversationStatus.ACTIVE);
         conversation.setStage(ConversationStage.NEED_INPUT);
         conversation.setUnderstandingConfirmed(false);
+        conversation.setUiConfirmed(false);
+        conversation.setGateStatusJson("{\"REQ\":\"PENDING\",\"UI\":\"PENDING\",\"IMP\":\"PENDING\",\"PREVIEW\":\"PENDING\"}");
         return conversation;
     }
 }

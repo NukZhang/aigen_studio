@@ -1,0 +1,110 @@
+{
+  "$id": "UI_Spec.v1",
+  "type": "object",
+  "required": [
+    "pages",
+    "routes",
+    "globalStates",
+    "interactions"
+  ],
+  "properties": {
+    "pages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "purpose",
+          "components",
+          "states"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "components": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "states": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "emptyAndErrorStates": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "routes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "pageId"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "pageId": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "globalStates": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "interactions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "from",
+          "action",
+          "to"
+        ],
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

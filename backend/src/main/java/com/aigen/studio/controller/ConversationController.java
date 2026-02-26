@@ -2,8 +2,11 @@ package com.aigen.studio.controller;
 
 import com.aigen.studio.dto.ConfirmUnderstandingRequest;
 import com.aigen.studio.dto.ConversationDTO;
+import com.aigen.studio.dto.ImplementationVerifyRequest;
 import com.aigen.studio.dto.MessageDTO;
+import com.aigen.studio.dto.PreviewStartRequest;
 import com.aigen.studio.dto.UpdateConversationTitleRequest;
+import com.aigen.studio.dto.PreviewStatusDTO;
 import com.aigen.studio.service.ConversationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -12,6 +15,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/conversations")
@@ -100,5 +104,48 @@ public class ConversationController {
         log.info("Fixing conversation {} stage to: {}", id, stage);
         ConversationDTO conversation = conversationService.fixConversationStage(id, stage);
         return ResponseEntity.ok(conversation);
+    }
+
+    // ==================== SDAC 标准流程 API ====================
+
+    @PostMapping("/{id}/understanding/parse")
+    public ResponseEntity<Map<String, Object>> parseUnderstanding(@PathVariable Long id) {
+        return ResponseEntity.ok(conversationService.parseUnderstanding(id));
+    }
+
+    @PostMapping("/{id}/understanding/confirm")
+    public ResponseEntity<ConversationDTO> confirmUnderstandingSdac(
+            @PathVariable Long id,
+            @RequestBody ConfirmUnderstandingRequest request) {
+        return ResponseEntity.ok(conversationService.confirmUnderstandingSdac(id, request));
+    }
+
+    @PostMapping("/{id}/ui/design")
+    public ResponseEntity<Map<String, Object>> designUi(@PathVariable Long id) {
+        return ResponseEntity.ok(conversationService.designUi(id));
+    }
+
+    @PostMapping("/{id}/ui/confirm")
+    public ResponseEntity<ConversationDTO> confirmUi(@PathVariable Long id) {
+        return ResponseEntity.ok(conversationService.confirmUiDesign(id));
+    }
+
+    @PostMapping("/{id}/implementation/plan")
+    public ResponseEntity<Map<String, Object>> createImplementationPlan(@PathVariable Long id) {
+        return ResponseEntity.ok(conversationService.createImplementationPlan(id));
+    }
+
+    @PostMapping("/{id}/implementation/verify")
+    public ResponseEntity<Map<String, Object>> verifyImplementation(
+            @PathVariable Long id,
+            @RequestBody(required = false) ImplementationVerifyRequest request) {
+        return ResponseEntity.ok(conversationService.verifyImplementation(id, request));
+    }
+
+    @PostMapping("/{id}/preview/start")
+    public ResponseEntity<PreviewStatusDTO> startPreview(
+            @PathVariable Long id,
+            @RequestBody PreviewStartRequest request) {
+        return ResponseEntity.ok(conversationService.startPreviewWithEvidence(id, request));
     }
 }

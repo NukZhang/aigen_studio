@@ -1,0 +1,22 @@
+version: v1
+gates:
+  REQ:
+    passWhen:
+      - "nextAction == READY_FOR_CONFIRM"
+      - "understandingConfirmed == true"
+  UI:
+    passWhen:
+      - "uiSpecJson is not blank"
+      - "uiConfirmed == true"
+  IMP:
+    passWhen:
+      - "implementationPlanJson is not blank"
+      - "evidenceManifestPath is not blank"
+  PREVIEW:
+    passWhen:
+      - "allowUnverifiedPreview == true OR evidenceRef matches evidenceManifestPath"
+defaultStatus:
+  REQ: PENDING
+  UI: PENDING
+  IMP: PENDING
+  PREVIEW: PENDING

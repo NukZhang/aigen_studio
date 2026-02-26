@@ -37,14 +37,14 @@ describe('App sidebar actions', () => {
     const actionButtons = wrapper.findAll('[data-action]')
 
     expect(actionButtons).toHaveLength(2)
-    expect(actionButtons.map(btn => btn.attributes('data-action'))).toEqual(['history', 'new'])
+    expect(actionButtons.map(btn => btn.attributes('data-action'))).toEqual(['new', 'history'])
 
     await actionButtons[0].trigger('click')
     await flushPromises()
-    expect(router.currentRoute.value.query.action).toBe('history')
+    expect(router.currentRoute.value.query.action).toBe('new')
 
     await actionButtons[1].trigger('click')
     await flushPromises()
-    expect(router.currentRoute.value.query.action).toBe('new')
+    expect(router.currentRoute.value.query.action).toBe('history')
   })
 })
