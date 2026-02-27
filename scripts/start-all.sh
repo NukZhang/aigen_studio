@@ -1,11 +1,15 @@
 #!/bin/bash
 
+set -euo pipefail
+
 echo "Starting AIGen Studio (Backend + Frontend)..."
 
 # Start backend in background
 echo "Starting backend..."
 cd "$(dirname "$0")/../backend"
-mvn spring-boot:run &
+echo "Performing clean compile for backend..."
+mvn -q -DskipTests clean compile
+mvn -q spring-boot:run &
 BACKEND_PID=$!
 
 # Wait for backend to start

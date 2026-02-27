@@ -124,6 +124,25 @@ const mountWorkspace = async (overrides: ConversationOverrides = {}) => {
 }
 
 describe('Workspace clarifying panel', () => {
+  it('renders clarification panel in a scrollable layout so submit stays reachable', async () => {
+    const wrapper = await mountWorkspace({
+      currentQuestionIndex: 0,
+      answeredQuestionIds: []
+    })
+
+    const panel = wrapper.find('.clarifying-panel')
+    expect(panel.exists()).toBe(true)
+    expect(panel.classes()).toContain('clarifying-panel-scrollable')
+
+    const questionList = wrapper.find('.clarifying-question-list')
+    expect(questionList.exists()).toBe(true)
+    expect(questionList.classes()).toContain('clarifying-question-scroll')
+
+    const actions = wrapper.find('.clarifying-batch-actions')
+    expect(actions.exists()).toBe(true)
+    expect(actions.classes()).toContain('clarifying-batch-actions-sticky')
+  })
+
   it('renders all clarification questions and submits batch answers once', async () => {
     const wrapper = await mountWorkspace({
       currentQuestionIndex: 0,

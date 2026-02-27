@@ -43,6 +43,9 @@ public class PreviewService {
     @Value("${preview.backend-ready-check-interval-ms:200}")
     private long backendReadyCheckIntervalMs;
 
+    @Value("${iflow.sdk.output-dir:./output}")
+    private String outputDir;
+
     private final Object lock = new Object();
     private PreviewSession activeSession;
 
@@ -545,7 +548,15 @@ public class PreviewService {
             }
             throw new RuntimeException(ROOT_PATH_NOT_READY_MESSAGE);
         }
-        Path path = Paths.get(rootPath).toAbsolutePath();
+        Path path = Paths.get(rootPath).toAbsolutePath().normalize();
+        Path configuredRoot = resolveConfiguredConversationRoot(conversation.getId());
+        if (shouldSwitchToConfiguredRoot(path, configuredRoot)) {
+            path = configuredRoot;
+            if (!path.toString().equals(rootPath)) {
+                conversation.setGeneratedCodePath(path.toString());
+                conversationRepository.save(conversation);
+            }
+        }
         // 规范化路径，处理 macOS 上的符号链接（/var/folders -> /private/var/folders）
         try {
             path = path.toRealPath();
@@ -554,6 +565,23 @@ public class PreviewService {
             path = path.normalize();
         }
         return path;
+    }
+
+    private Path resolveConfiguredConversationRoot(Long conversationId) {
+        return Paths.get(outputDir, "conversation-" + conversationId).toAbsolutePath().normalize();
+    }
+
+    private boolean shouldSwitchToConfiguredRoot(Path currentRoot, Path configuredRoot) {
+        if (!Files.exists(configuredRoot)) {
+            return false;
+        }
+        if (!Files.exists(currentRoot)) {
+            return true;
+        }
+
+        Path backendRoot = Paths.get("").toAbsolutePath().normalize();
+        Path legacyGeneratedBase = backendRoot.resolve("generated-code").normalize();
+        return currentRoot.equals(backendRoot) || currentRoot.startsWith(legacyGeneratedBase);
     }
 
     private PreviewStatusDTO buildNotReadyStatus(Long conversationId) {

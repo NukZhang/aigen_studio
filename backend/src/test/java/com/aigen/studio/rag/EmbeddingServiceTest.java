@@ -9,12 +9,14 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -53,5 +55,23 @@ class EmbeddingServiceTest {
         verify(embeddingModel).embedAll(captor.capture());
         List captured = captor.getValue();
         assertEquals(2, captured.size());
+    }
+
+    @Test
+    void embedAllSegmentsSplitsLargeInputIntoBatches() {
+        ReflectionTestUtils.setField(embeddingService, "batchSize", 2);
+        when(embeddingModel.embedAll(anyList())).thenAnswer(invocation -> {
+            List<?> segments = invocation.getArgument(0);
+            return Response.from(segments.stream()
+                    .map(ignored -> Embedding.from(new float[]{1.0f, 0.0f}))
+                    .toList());
+        });
+
+        List<Embedding> embeddings = embeddingService.embedAll(
+                List.of("a", "b", "c", "d", "e")
+        );
+
+        assertEquals(5, embeddings.size());
+        verify(embeddingModel, times(3)).embedAll(anyList());
     }
 }

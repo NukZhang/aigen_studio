@@ -30,6 +30,9 @@ class DocumentIngestionServiceTest {
     @Mock
     private VectorStoreService vectorStoreService;
 
+    @Mock
+    private RAGService ragService;
+
     @InjectMocks
     private DocumentIngestionService documentIngestionService;
 
@@ -58,6 +61,7 @@ class DocumentIngestionServiceTest {
         assertFalse(merged.contains("#"));
         assertFalse(merged.contains("**"));
         assertEquals("spec", segments.get(0).metadata().get("source"));
+        verify(ragService).invalidateSearchCache();
     }
 
     @Test
@@ -79,6 +83,7 @@ class DocumentIngestionServiceTest {
         assertFalse(segments.isEmpty());
         assertTrue(segments.get(0).text().contains("Qdrant"));
         assertEquals("knowledge.pdf", segments.get(0).metadata().get("fileName"));
+        verify(ragService).invalidateSearchCache();
     }
 
     private byte[] createSimplePdf(String text) throws Exception {

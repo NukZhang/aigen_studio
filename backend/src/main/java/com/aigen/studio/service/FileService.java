@@ -5,6 +5,7 @@ import com.aigen.studio.entity.Conversation;
 import com.aigen.studio.repository.ConversationRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -28,6 +29,9 @@ public class FileService {
 
     private final FileWorkspaceService fileWorkspaceService;
     private final ConversationRepository conversationRepository;
+
+    @Value("${iflow.sdk.output-dir:./output}")
+    private String outputDir;
 
     /**
      * 获取 Conversation 的文件树
@@ -239,6 +243,32 @@ public class FileService {
             }
             throw new RuntimeException("Conversation generated code path is not ready");
         }
-        return Paths.get(rootPath).toAbsolutePath().normalize();
+
+        Path currentRoot = Paths.get(rootPath).toAbsolutePath().normalize();
+        Path configuredRoot = resolveConfiguredConversationRoot(conversationId);
+        if (shouldSwitchToConfiguredRoot(currentRoot, configuredRoot)) {
+            conversation.setGeneratedCodePath(configuredRoot.toString());
+            conversationRepository.save(conversation);
+            return configuredRoot;
+        }
+
+        return currentRoot;
+    }
+
+    private Path resolveConfiguredConversationRoot(Long conversationId) {
+        return Paths.get(outputDir, "conversation-" + conversationId).toAbsolutePath().normalize();
+    }
+
+    private boolean shouldSwitchToConfiguredRoot(Path currentRoot, Path configuredRoot) {
+        if (!Files.exists(configuredRoot)) {
+            return false;
+        }
+        if (!Files.exists(currentRoot)) {
+            return true;
+        }
+
+        Path backendRoot = Paths.get("").toAbsolutePath().normalize();
+        Path legacyGeneratedBase = backendRoot.resolve("generated-code").normalize();
+        return currentRoot.equals(backendRoot) || currentRoot.startsWith(legacyGeneratedBase);
     }
 }

@@ -34,7 +34,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "spring.datasource.driver-class-name=org.h2.Driver",
         "spring.datasource.username=sa",
         "spring.datasource.password=",
-        "spring.jpa.hibernate.ddl-auto=create-drop"
+        "spring.jpa.hibernate.ddl-auto=create-drop",
+        "iflow.sdk.output-dir=target/file-controller-generated"
 })
 @AutoConfigureMockMvc
 class FileControllerConversationTest {
@@ -103,6 +104,33 @@ class FileControllerConversationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success", is(true)))
                 .andExpect(jsonPath("$.content", is("hello")));
+    }
+
+    @Test
+    void readsFromConfiguredOutputWhenStoredPathPointsToBackendDirectory() throws Exception {
+        Conversation conversation = new Conversation();
+        conversation.setProjectName("Test Project");
+        conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+        conversation.setStage(ConversationStage.SERVICE_STARTING);
+        conversation = conversationRepository.save(conversation);
+
+        Path configuredRoot = Path.of("target", "file-controller-generated", "conversation-" + conversation.getId())
+                .toAbsolutePath()
+                .normalize();
+        Files.createDirectories(configuredRoot);
+        Files.writeString(configuredRoot.resolve("a.txt"), "from-configured-root");
+
+        conversation.setGeneratedCodePath(Path.of("backend").toAbsolutePath().normalize().toString());
+        conversationRepository.save(conversation);
+
+        mockMvc.perform(get("/files/conversation/{id}/content", conversation.getId())
+                        .param("filePath", "a.txt"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success", is(true)))
+                .andExpect(jsonPath("$.content", is("from-configured-root")));
+
+        Conversation updated = conversationRepository.findById(conversation.getId()).orElseThrow();
+        assertEquals(configuredRoot.toString(), Path.of(updated.getGeneratedCodePath()).toAbsolutePath().normalize().toString());
     }
 
     @Test

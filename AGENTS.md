@@ -8,7 +8,7 @@ AIGen Studio 是一个基于 Me2AI 规范实现的 AI 代码生成平台 PoC（�
 
 **核心价值**：通过 IR（中间表示）规范定义项目结构，利用 iFlow AI 生成前端 Vue 3、后端 Spring Boot 工程及相关文档，并与 GitLab 深度集成实现代码提交和 CI/CD 触发。
 
-**项目状态**：第一阶段开发已完成，核心功能已实现并通过验证。当前正在进行第二阶段 GitLab 集成增强。
+**项目状态**：Phase 1-3 核心能力已完成并通过验证；当前处于 Phase 4（整合与优化）阶段，重点推进监控告警与文档收敛。
 
 ## 技术架构
 
@@ -46,6 +46,7 @@ aigen_studio/
 │   │   │   ├── ArtifactController.java   # 产出物管理 API
 │   │   │   ├── GenerationJobController.java  # 作业管理 API
 │   │   │   ├── IRDocumentController.java     # IR 文档管理 API
+│   │   │   ├── KnowledgeController.java      # 知识库/RAG API
 │   │   │   └── RequirementController.java    # 需求管理 API
 │   │   ├── dto/                          # 数据传输对象
 │   │   │   ├── ArtifactDTO.java
@@ -339,6 +340,22 @@ npm run build
 
 **关键实体**：`Artifact`（`backend/src/main/java/com/aigen/studio/entity/Artifact.java`）
 
+### 5. 知识库与 RAG（Knowledge / RAG）
+**功能**：知识文档摄入、语义检索、会话记忆检索、缓存指标与告警状态观测
+
+**API 端点**
+- `POST /api/knowledge/upload` - 上传知识文件（Markdown/PDF）
+- `POST /api/knowledge/text` - 摄入文本知识
+- `GET /api/knowledge/search` - 检索知识（支持 `conversationId`）
+- `GET /api/knowledge/cache/stats` - 查询缓存指标
+- `GET /api/knowledge/cache/alerts` - 查询缓存告警状态
+- `GET /api/knowledge/perf/stats` - 查询检索性能统计
+
+**核心服务**
+- `DocumentIngestionService`：文档解析、分块与向量化入库
+- `RAGService`：相似度检索、RAG 增强、缓存与告警判定
+- `ConversationVectorService`：会话历史向量化与语义检索
+
 ## 配置说明
 
 ### 后端配置（`backend/src/main/resources/application.yml`）
@@ -384,8 +401,27 @@ gitlab:
   timeout: 600000  # 10 分钟
 ```
 
+**AIGen RAG 配置**
+```yaml
+aigen:
+  rag:
+    search-cache-enabled: true
+    search-cache-ttl-seconds: 120
+    search-cache-max-size: 500
+    alert-enabled: true
+    alert-min-requests: 20
+    alert-max-miss-rate: 0.60
+    alert-log-cooldown-seconds: 300
+    perf-latency-threshold-ms: 100
+    perf-sample-size: 200
+    perf-min-samples: 30
+    embedding-batch-size: 16
+    conversation-index-timeout-ms: 1500
+```
+
 **环境变量**
 - `IFLOW_API_KEY` - iFlow SDK API 密钥
+- `DASHSCOPE_API_KEY` - LangChain Chat/Embedding API 密钥
 - `GITLAB_URL` - GitLab 服务器地址
 - `GITLAB_TOKEN` - GitLab 访问令牌
 - `IFLOW_OUTPUT_DIR` - 代码生成输出目录

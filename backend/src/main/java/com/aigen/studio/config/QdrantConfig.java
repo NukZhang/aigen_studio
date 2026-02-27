@@ -37,6 +37,7 @@ public class QdrantConfig {
                 .host(properties.getHost())
                 .port(properties.getPort())
                 .collectionName(properties.getCollectionName())
+                .useTls(properties.isUseTls())
                 .build();
     }
 

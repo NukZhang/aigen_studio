@@ -872,9 +872,9 @@ docker-compose up -d qdrant
 
 ```
 Phase 1: [ ] 未开始 [ ] 进行中 [x] 已完成
-Phase 2: [x] 未开始 [ ] 进行中 [ ] 已完成
-Phase 3: [x] 未开始 [ ] 进行中 [ ] 已完成
-Phase 4: [x] 未开始 [ ] 进行中 [ ] 已完成
+Phase 2: [ ] 未开始 [ ] 进行中 [x] 已完成
+Phase 3: [ ] 未开始 [ ] 进行中 [x] 已完成
+Phase 4: [ ] 未开始 [x] 进行中 [ ] 已完成
 ```
 
 ### 7.5 本次会话记录（2026-02-26）
@@ -891,6 +891,88 @@ Phase 4: [x] 未开始 [ ] 进行中 [ ] 已完成
 
 **问题与处理**
 - Docker daemon 曾未运行导致 Qdrant 容器无法启动；已在 Docker 可用后完成启动与连通验证（`healthz` 通过，dashboard HTTP 200）。
+
+### 7.6 本次会话记录（2026-02-26，Phase 2）
+
+**已完成**
+- Phase 2.1：新增文档摄入服务 `DocumentIngestionService`，支持 Markdown/PDF 解析、分块、元数据写入向量库。
+- Phase 2.2：新增 `RAGService`，实现相似度检索、上下文构建、RAG 增强生成（支持按 `conversationId` 过滤）。
+- Phase 2.3：新增 `ConversationVectorService`，实现历史对话分块向量化和语义召回。
+- Phase 2.4：新增 `UnderstandingService` 路由层（LangChain+RAG / LangChain / iFlow 降级）；`ConversationService` 理解入口完成接线替换。
+- Phase 2.5：新增 `KnowledgeController` 与 `KnowledgeIngestRequest`，提供知识上传、文本摄入、知识检索 API。
+
+**测试与验证**
+- 新增测试通过：`DocumentIngestionServiceTest`、`RAGServiceTest`、`ConversationVectorServiceTest`、`UnderstandingServiceTest`、`KnowledgeControllerTest`。
+- 回归测试通过：`ConversationSdacFlowControllerTest`、`ConversationReadyStageTest`、`ConversationServiceTitleTest`。
+- 编译验证通过：`mvn -DskipTests compile`。
+
+**待完成**
+- 无（Phase 2 任务清单已完成）。
+
+### 7.7 本次会话记录（2026-02-26，Phase 3）
+
+**已完成**
+- Phase 3.1：新增 `agent` 模块基础架构：`AgentState`、`AgentEvent`、`AgentOrchestrator`，支持 Supervisor + Workers 工作流执行与最大迭代保护。
+- Phase 3.2：新增 4 个智能体节点：`SupervisorAgent`、`AnalystAgent`、`DesignerAgent`、`DeveloperAgent`，完成任务分派、需求分析、UI 设计、实现方案生成。
+- Phase 3.3：实现共享状态与任务交接机制（`AgentState` 统一承载分析结果、UI 方案、实现方案、消息与事件轨迹）。
+- Phase 3.4：新增 `MultiAgentService`，提供同步/异步编排执行能力，并接入 `UnderstandingService` 路由（`enableMultiAgent + useLangChain` 开启后优先走多智能体）。
+- Phase 3.5：补齐执行日志、状态追踪与流程可视化（`AgentEvent` 轨迹 + Mermaid 流程图渲染能力）。
+
+**测试与验证**
+- 新增测试通过：`AgentOrchestratorTest`、`SupervisorAgentTest`、`WorkerAgentsTest`、`MultiAgentServiceTest`。
+- 路由测试更新通过：`UnderstandingServiceTest`（新增多智能体路径测试）。
+- 回归测试通过：`ConversationSdacFlowControllerTest`、`ConversationReadyStageTest`、`ConversationServiceTitleTest`、`KnowledgeControllerTest`。
+- 编译验证通过：`mvn -DskipTests compile`。
+
+**待完成**
+- 无（Phase 3 任务清单已完成）。
+
+### 7.8 本次会话记录（2026-02-26，Phase 4 Batch A）
+
+**已完成**
+- Phase 4.1（增强）：`UnderstandingService` 已补齐多智能体失败后的降级路径测试，确保 `MultiAgent -> RAG -> LangChain -> iFlow` 路由链可验证。
+- Phase 4.2（性能）：`RAGService` 新增检索缓存（TTL、容量、命中/未命中/淘汰统计）与缓存失效能力；`EmbeddingService` 新增可配置分批向量化；`ConversationVectorService` 新增异步向量化与运行态去重能力。
+- Phase 4.4（监控基础）：`KnowledgeController` 新增 `GET /knowledge/cache/stats`，可查询 RAG 缓存指标（hits/misses/evictions/size）。
+
+**测试与验证**
+- 新增/更新测试通过：`RAGServiceTest`、`EmbeddingServiceTest`、`ConversationVectorServiceTest`、`DocumentIngestionServiceTest`、`UnderstandingServiceTest`、`KnowledgeControllerTest`、`VectorStoreServiceTest`。
+- 回归测试通过：`AgentOrchestratorTest`、`SupervisorAgentTest`、`WorkerAgentsTest`、`MultiAgentServiceTest`、`ConversationSdacFlowControllerTest`、`ConversationReadyStageTest`、`ConversationServiceTitleTest`。
+- 编译验证通过：`mvn -DskipTests compile`。
+
+**待完成**
+- Phase 4.4：告警策略（阈值告警）尚未落地。
+- Phase 4.5：README / API 文档 / AGENTS.md 的系统化更新尚未完成。
+
+### 7.9 本次会话记录（2026-02-26，Phase 4 Batch B/C）
+
+**已完成**
+- Phase 4.1（ConversationService 接线增强）：在理解链路新增会话语义记忆刷新，`runSingleUnderstanding` / `reUnderstandRequirement` / `parseUnderstanding` 统一接入 `ConversationVectorService#indexConversationAsync`，并通过 `AgentProperties` 开关与超时控制实现可降级执行。
+- Phase 4.4（监控与告警）：`RAGService` 新增缓存告警策略（最小样本量 + miss rate 阈值 + 告警日志冷却）；`KnowledgeController` 新增 `GET /knowledge/cache/alerts` 查询告警状态。
+- Phase 4.5（文档更新）：已新增 `docs/API_KNOWLEDGE_RAG.md`，并更新 `README.md`、`AGENTS.md`，补齐 Knowledge/RAG API 与配置说明。
+
+**测试与验证**
+- TDD 红灯验证：`RAGServiceTest`、`KnowledgeControllerTest` 在新增告警测试后先编译失败（缺少 `CacheAlertStatus` 与 `getCacheAlertStatus`），符合预期。
+- 绿灯回归通过：`RAGServiceTest`、`KnowledgeControllerTest`、`ConversationVectorServiceTest`、`DocumentIngestionServiceTest`、`EmbeddingServiceTest`、`VectorStoreServiceTest`、`UnderstandingServiceTest`、`ConversationServiceTitleTest`、`ConversationReadyStageTest`、`ConversationSdacFlowControllerTest`。
+- 编译验证通过：`mvn -DskipTests compile`。
+
+**待完成**
+- Phase 4 验收中的性能量化指标（`RAG 检索 < 100ms`）尚未建立自动化基准与持续观测。
+
+### 7.10 本次会话记录（2026-02-26，Phase 4 Batch D）
+
+**已完成**
+- Phase 4.4（Metrics 扩展）：`RAGService` 新增检索性能统计能力（`avg/p95/max`、样本窗口、阈值判定），并在每次检索自动采样。
+- Phase 4.4（观测 API）：`KnowledgeController` 新增 `GET /knowledge/perf/stats`，可直接读取性能统计与阈值状态。
+- Phase 4.5（文档补齐）：`docs/API_KNOWLEDGE_RAG.md`、`README.md`、`AGENTS.md` 已新增性能接口和 `aigen.rag.perf-*` 配置说明。
+
+**测试与验证**
+- TDD 红灯验证：新增 `RAGServiceTest.performanceStatsTracksLatencyAndThresholdBreach` 与 `KnowledgeControllerTest.performanceStatsEndpointReturnsLatencyMetrics` 后先失败（缺少 `PerformanceStats` / `getPerformanceStats`），符合预期。
+- 绿灯验证通过：`RAGServiceTest`、`KnowledgeControllerTest`。
+- 回归测试通过：`RAGServiceTest`、`KnowledgeControllerTest`、`ConversationVectorServiceTest`、`DocumentIngestionServiceTest`、`EmbeddingServiceTest`、`VectorStoreServiceTest`、`UnderstandingServiceTest`、`ConversationServiceTitleTest`、`ConversationReadyStageTest`、`ConversationSdacFlowControllerTest`。
+- 编译验证通过：`mvn -DskipTests compile`。
+
+**待完成**
+- 无（Phase 4 当前计划项已完成，后续可按需要补压测脚本与长期监控面板）。
 
 ---
 

@@ -4,8 +4,10 @@ import com.aigen.studio.dto.PreviewStatusDTO;
 import com.aigen.studio.entity.Conversation;
 import com.aigen.studio.entity.ConversationStage;
 import com.aigen.studio.repository.ConversationRepository;
+import com.aigen.studio.service.CodeGenerationService;
 import com.aigen.studio.service.PreviewService;
 import com.aigen.studio.service.PromptTaskService;
+import com.aigen.studio.service.UIPrototypeService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -22,6 +24,7 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.blankOrNullString;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -34,7 +37,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "spring.datasource.username=sa",
         "spring.datasource.password=",
         "spring.jpa.hibernate.ddl-auto=create-drop",
-        "aigen.preview.allow-unverified-preview=false"
+        "aigen.preview.allow-unverified-preview=false",
+        "iflow.sdk.output-dir=target/conversation-sdac-generated"
 })
 @AutoConfigureMockMvc
 class ConversationSdacFlowControllerTest {
@@ -51,6 +55,12 @@ class ConversationSdacFlowControllerTest {
     @MockBean
     private PreviewService previewService;
 
+    @MockBean
+    private CodeGenerationService codeGenerationService;
+
+    @MockBean
+    private UIPrototypeService uiPrototypeService;
+
     @BeforeEach
     void setUp() {
         conversationRepository.deleteAll();
@@ -65,12 +75,15 @@ class ConversationSdacFlowControllerTest {
 
         mockMvc.perform(post("/conversations/{id}/ui/design", conversation.getId()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.conversation.stage").value("UI_DESIGNING"))
+                .andExpect(jsonPath("$.conversation.stage").value("UI_GENERATING"))
                 .andExpect(jsonPath("$.uiSpec.pages", hasSize(1)))
                 .andExpect(jsonPath("$.uiSpec.routes", hasSize(1)))
                 .andExpect(jsonPath("$.uiSpec.globalStates", hasSize(1)))
                 .andExpect(jsonPath("$.uiSpec.interactions", hasSize(1)))
-                .andExpect(jsonPath("$.prototypePath", not(blankOrNullString())));
+                .andExpect(jsonPath("$.prototypePath").value(blankOrNullString()))
+                .andExpect(jsonPath("$.prototypeUrl", not(blankOrNullString())));
+
+        verify(uiPrototypeService).generateUIPrototype(conversation.getId());
     }
 
     @Test
@@ -153,6 +166,40 @@ class ConversationSdacFlowControllerTest {
     }
 
     @Test
+    void confirmUnderstandingAutoBuildsContractWhenMissing() throws Exception {
+        Conversation conversation = newConversation(ConversationStage.UNDERSTANDING_CONFIRMED);
+        conversation.setUnderstandingConfirmed(false);
+        conversation.setMe2aiContractJson(null);
+        conversation.setAiUnderstanding("""
+                ## 需求契约卡
+                ### 项目目标
+                - 制作一个新年祝福语小程序
+                ### 平台与目标用户
+                - 微信小程序，普通用户
+                ### 核心功能
+                - 生成祝福语
+                - 一键复制
+                ### 验收标准
+                - 用户可生成并复制祝福语
+                """);
+        conversation = conversationRepository.save(conversation);
+
+        mockMvc.perform(post("/conversations/{id}/understanding/confirm", conversation.getId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"confirmed":true}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.stage").value("UNDERSTANDING_CONFIRMED"))
+                .andExpect(jsonPath("$.understandingConfirmed").value(true))
+                .andExpect(jsonPath("$.me2aiContractJson", not(blankOrNullString())));
+
+        Conversation persisted = conversationRepository.findById(conversation.getId()).orElseThrow();
+        org.junit.jupiter.api.Assertions.assertNotNull(persisted.getMe2aiConfirmedAt());
+        org.junit.jupiter.api.Assertions.assertNotNull(persisted.getMe2aiContractJson());
+    }
+
+    @Test
     void i3I7I8ConfirmUiAndBuildPlanAndVerifyWritesEvidence() throws Exception {
         Conversation conversation = newConversation(ConversationStage.UNDERSTANDING_CONFIRMED);
         conversation.setUnderstandingConfirmed(true);
@@ -209,6 +256,45 @@ class ConversationSdacFlowControllerTest {
         Conversation afterVerify = conversationRepository.findById(conversation.getId()).orElseThrow();
         org.junit.jupiter.api.Assertions.assertNotNull(afterVerify.getEvidenceManifestPath());
         org.junit.jupiter.api.Assertions.assertNotNull(afterVerify.getGateStatusJson());
+    }
+
+    @Test
+    void verifyPassStartsCodeGenerationAndKeepsCodeGeneratingStage() throws Exception {
+        Conversation conversation = newConversation(ConversationStage.CODE_GENERATING);
+        conversation.setUnderstandingConfirmed(true);
+        conversation.setUiConfirmed(true);
+        conversation.setImplementationPlanJson("""
+                {"scope":["A"],"nonGoals":["B"],"filesToChange":["a"],"verifications":["mvn test"],"evidenceExpected":["report"]}
+                """);
+        conversation = conversationRepository.save(conversation);
+
+        mockMvc.perform(post("/conversations/{id}/implementation/verify", conversation.getId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "passed": true,
+                                  "verifications": [
+                                    {"cmd":"mvn test","status":"PASS","summary":"all pass"}
+                                  ],
+                                  "artifacts": ["backend/target/surefire-reports"]
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result").value("PASS"))
+                .andExpect(jsonPath("$.manifestPath", not(blankOrNullString())));
+
+        Conversation persisted = conversationRepository.findById(conversation.getId()).orElseThrow();
+        org.junit.jupiter.api.Assertions.assertEquals(ConversationStage.CODE_GENERATING, persisted.getStage());
+        org.junit.jupiter.api.Assertions.assertNotNull(persisted.getEvidenceManifestPath());
+        String expectedRoot = java.nio.file.Paths.get("target", "conversation-sdac-generated", "conversation-" + conversation.getId())
+                .toAbsolutePath()
+                .normalize()
+                .toString();
+        org.junit.jupiter.api.Assertions.assertEquals(
+                expectedRoot,
+                java.nio.file.Paths.get(persisted.getGeneratedCodePath()).toAbsolutePath().normalize().toString()
+        );
+        verify(codeGenerationService).generateCodeForConversationAsync(conversation.getId());
     }
 
     @Test

@@ -25,6 +25,7 @@ import java.util.stream.Collectors;
 public class DocumentIngestionService {
 
     private final VectorStoreService vectorStoreService;
+    private final RAGService ragService;
     private final DocumentSplitter documentSplitter = new DocumentByParagraphSplitter(500, 100);
 
     public IngestionResult ingestMultipartFile(MultipartFile file, Map<String, Object> metadata) {
@@ -81,6 +82,7 @@ public class DocumentIngestionService {
                 .collect(Collectors.toList());
 
         List<String> segmentIds = vectorStoreService.addSegments(segments);
+        ragService.invalidateSearchCache();
         log.info("Ingested {} segments into vector store", segmentIds.size());
         return new IngestionResult(segmentIds.size(), segmentIds);
     }

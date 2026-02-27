@@ -41,6 +41,7 @@ cd frontend && npm install && npm run dev
 - ✅ 代码编辑：在线查看和编辑生成的代码文件
 - ✅ 多模型支持：支持选择不同的 AI 模型进行代码生成
 - ✅ 教程系统：内置开发教程，帮助快速上手
+- ✅ 知识增强：支持知识摄入、RAG 检索、缓存指标与告警状态查询
 
 ## 📖 文档
 
@@ -48,6 +49,7 @@ cd frontend && npm install && npm run dev
 - [实现总结](./IMPLEMENTATION_SUMMARY.md)
 - [快速入门](./docs/QUICKSTART.md)
 - [部署指南](./docs/DEPLOYMENT.md)
+- [Knowledge / RAG API](./docs/API_KNOWLEDGE_RAG.md)
 
 ## 🏗️ 技术栈
 
@@ -96,7 +98,29 @@ iflow:
 gitlab:
   url: ${GITLAB_URL}
   token: ${GITLAB_TOKEN}
+
+aigen:
+  rag:
+    search-cache-enabled: true
+    search-cache-ttl-seconds: 120
+    search-cache-max-size: 500
+    alert-enabled: true
+    alert-min-requests: 20
+    alert-max-miss-rate: 0.60
+    alert-log-cooldown-seconds: 300
+    perf-latency-threshold-ms: 100
+    perf-sample-size: 200
+    perf-min-samples: 30
 ```
+
+常用知识库接口：
+
+- `POST /api/knowledge/upload`
+- `POST /api/knowledge/text`
+- `GET /api/knowledge/search`
+- `GET /api/knowledge/cache/stats`
+- `GET /api/knowledge/cache/alerts`
+- `GET /api/knowledge/perf/stats`
 
 ## 📝 使用流程
 

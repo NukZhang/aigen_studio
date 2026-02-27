@@ -14,6 +14,15 @@
       </div>
       <div class="header-right">
         <el-button
+          v-if="conversationId"
+          size="small"
+          @click="refreshPreview"
+          :loading="isRefreshing"
+        >
+          <el-icon><Refresh /></el-icon>
+          刷新预览
+        </el-button>
+        <el-button
           v-if="conversation?.uiConfirmed"
           type="primary"
           size="small"
@@ -103,6 +112,7 @@ const conversation = ref<Conversation | null>(null)
 const uiHtml = ref<string | null>(null)
 const isConfirming = ref(false)
 const isRegenerating = ref(false)
+const isRefreshing = ref(false)
 
 const fetchConversation = async () => {
   if (!props.conversationId) return
@@ -145,6 +155,16 @@ const regenerateUIPrototype = async () => {
     ElMessage.error('重新生成失败，请稍后重试')
   } finally {
     isRegenerating.value = false
+  }
+}
+
+const refreshPreview = async () => {
+  if (!props.conversationId) return
+  isRefreshing.value = true
+  try {
+    await fetchConversation()
+  } finally {
+    isRefreshing.value = false
   }
 }
 

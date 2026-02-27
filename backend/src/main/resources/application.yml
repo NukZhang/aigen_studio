@@ -64,19 +64,20 @@ gitlab:
 tutorial:
   base-path: tutorials
 
-# LangChain4j Configuration (DashScope OpenAI compatible mode)
+# LangChain4j Configuration (混合模式：Chat 用 iFlow，Embedding 用 Jina)
 langchain4j:
   open-ai:
     chat-model:
-      base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
-      api-key: ${DASHSCOPE_API_KEY:sk-placeholder}
-      model-name: qwen-plus
+      base-url: https://apis.iflow.cn/v1
+      api-key: ${IFLOW_API_KEY:sk-placeholder}
+      model-name: qwen3-max
       temperature: 0.7
       max-tokens: 4096
     embedding-model:
-      base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
-      api-key: ${DASHSCOPE_API_KEY:sk-placeholder}
-      model-name: text-embedding-v2
+      # 使用 Jina embedding 服务 (OpenAI 兼容格式)
+      base-url: https://api.jina.ai/v1
+      api-key: ${JINA_API_KEY:sk-placeholder}
+      model-name: jina-embeddings-v2-base-zh
 
 # Qdrant Configuration
 qdrant:
@@ -88,9 +89,22 @@ qdrant:
 # Prompt templates
 aigen:
   agent:
-    enable-rag: false
-    enable-multi-agent: false
-    use-langchain: false
+    enable-rag: true
+    enable-multi-agent: true
+    use-langchain: true
+  rag:
+    search-cache-enabled: true
+    search-cache-ttl-seconds: 120
+    search-cache-max-size: 500
+    alert-enabled: true
+    alert-min-requests: 20
+    alert-max-miss-rate: 0.60
+    alert-log-cooldown-seconds: 300
+    perf-latency-threshold-ms: 100
+    perf-sample-size: 200
+    perf-min-samples: 30
+    embedding-batch-size: 16
+    conversation-index-timeout-ms: 1500
   prompt:
     understanding-template: classpath:prompt-templates/understanding-prompt.md
     code-generation-template: classpath:prompt-templates/code-generation-prompt.md

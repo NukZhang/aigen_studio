@@ -141,14 +141,14 @@
       </div>
 
       <!-- 需求澄清面板 -->
-      <div class="clarifying-panel" v-if="conversation?.stage === 'CLARIFYING'">
+      <div class="clarifying-panel clarifying-panel-scrollable" v-if="conversation?.stage === 'CLARIFYING'">
         <div class="confirm-header">
           <el-icon><QuestionFilled /></el-icon>
           <span>需求澄清</span>
         </div>
         <div class="confirm-content">
           <h4>请一次性回答以下澄清问题</h4>
-          <div v-if="unansweredClarificationQuestions.length > 0" class="clarifying-question-list">
+          <div v-if="unansweredClarificationQuestions.length > 0" class="clarifying-question-list clarifying-question-scroll">
             <div
               v-for="question in unansweredClarificationQuestions"
               :key="question.id"
@@ -177,7 +177,7 @@
                   />
                 </div>
               </div>
-            <div class="clarifying-batch-actions">
+            <div class="clarifying-batch-actions clarifying-batch-actions-sticky">
               <el-button
                 type="primary"
                 size="small"
@@ -262,6 +262,7 @@
         </div>
         <div class="confirm-content">
           <p v-if="conversation?.stage === 'UI_CONFIRMED'">UI Gate 已通过。请生成 Implementation Plan。</p>
+          <p v-else-if="conversation?.evidenceManifestPath">Evidence 已生成，正在生成代码，请等待完成。</p>
           <p v-else>Implementation Plan 已生成，下一步执行验证并产出 Evidence。</p>
           <div v-if="implementationPlan" class="implementation-summary">
             <p>Scope：{{ (implementationPlan.scope || []).join('；') }}</p>
@@ -280,14 +281,21 @@
             生成实现计划
           </el-button>
           <el-button
-            v-else
+            v-else-if="!conversation?.evidenceManifestPath"
             type="primary"
             size="small"
             @click="verifyImplementation"
             :loading="isVerifyingImplementation"
           >
             <el-icon><CircleCheck /></el-icon>
-            生成 Evidence
+            生成 Evidence 并开始生成代码
+          </el-button>
+          <el-button
+            v-else
+            size="small"
+            disabled
+          >
+            代码生成中
           </el-button>
         </div>
       </div>
@@ -984,6 +992,33 @@ const submitClarificationBatch = async () => {
   }
 }
 
+const autoStartUiDesignAfterRequirementConfirm = async (): Promise<'started' | 'skipped' | 'failed'> => {
+  if (!conversationId.value || !conversation.value) {
+    return 'skipped'
+  }
+
+  if (conversation.value.stage !== 'UNDERSTANDING_CONFIRMED' || !conversation.value.understandingConfirmed) {
+    return 'skipped'
+  }
+
+  const designApi = (conversationApi as any).designUi
+  if (!designApi) {
+    return 'skipped'
+  }
+
+  isDesigningUI.value = true
+  try {
+    await designApi(conversationId.value)
+    await loadNewConversation(conversationId.value)
+    return 'started'
+  } catch (error) {
+    console.error('Failed to auto start UI design:', error)
+    return 'failed'
+  } finally {
+    isDesigningUI.value = false
+  }
+}
+
 const confirmUnderstanding = async (confirmed: boolean) => {
   if (!conversationId.value) return
 
@@ -997,7 +1032,14 @@ const confirmUnderstanding = async (confirmed: boolean) => {
     await loadNewConversation(conversationId.value)
 
     if (confirmed) {
-      ElMessage.success('需求已确认，可进入 UI 设计阶段')
+      const autoStartResult = await autoStartUiDesignAfterRequirementConfirm()
+      if (autoStartResult === 'started') {
+        ElMessage.success('需求已确认，已进入 UI 设计阶段')
+      } else if (autoStartResult === 'failed') {
+        ElMessage.warning('需求已确认，但自动进入 UI 设计失败，请点击“开始 UI 设计”重试')
+      } else {
+        ElMessage.success('需求已确认，可进入 UI 设计阶段')
+      }
     } else {
       ElMessage.info('请告诉我需要修改的地方')
     }
@@ -1088,13 +1130,12 @@ const verifyImplementation = async () => {
       summary: 'manual verify pass'
     }))
     const response = await verifyApi(conversationId.value, {
-      passed: true,
       verifications,
       artifacts: ['workspace/manual-verification']
     })
     await loadNewConversation(conversationId.value)
     if (response.data?.result === 'PASS') {
-      ElMessage.success('Evidence 已生成，可启动预览')
+      ElMessage.success('Evidence 已生成，开始生成代码...')
     } else {
       ElMessage.warning('验证失败，但 Evidence 已生成')
     }
@@ -1786,6 +1827,18 @@ onUnmounted(() => {
   margin-bottom: 16px;
 }
 
+.clarifying-panel-scrollable {
+  max-height: min(55vh, 520px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.clarifying-question-scroll {
+  max-height: min(30vh, 320px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
 .confirm-content h4 {
   margin: 0 0 8px 0;
   font-size: 13px;
@@ -1851,6 +1904,15 @@ onUnmounted(() => {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+.clarifying-batch-actions-sticky {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 8px;
+  background: linear-gradient(180deg, rgba(31, 31, 31, 0) 0%, #1f1f1f 24%);
 }
 
 .clarifying-submit-button {

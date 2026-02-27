@@ -3,8 +3,10 @@ package com.aigen.studio.service;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.aigen.studio.config.AgentProperties;
 import com.aigen.studio.dto.*;
 import com.aigen.studio.entity.*;
+import com.aigen.studio.rag.ConversationVectorService;
 import com.aigen.studio.repository.ConversationRepository;
 import com.aigen.studio.repository.MessageRepository;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -30,8 +32,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
@@ -67,11 +71,13 @@ public class ConversationService {
 
     private final ConversationRepository conversationRepository;
     private final MessageRepository messageRepository;
-    private final PromptTaskService promptTaskService;
+    private final UnderstandingService understandingService;
     private final CodeGenerationService codeGenerationService;
     private final UIPrototypeService uiPrototypeService;
     private final PreviewService previewService;
     private final SdacResourceService sdacResourceService;
+    private final ConversationVectorService conversationVectorService;
+    private final AgentProperties agentProperties;
     @Qualifier("taskExecutor")
     private final Executor taskExecutor;
 
@@ -83,6 +89,12 @@ public class ConversationService {
 
     @Value("${aigen.preview.allow-unverified-preview:false}")
     private boolean allowUnverifiedPreview = false;
+
+    @Value("${aigen.rag.conversation-index-timeout-ms:1500}")
+    private long conversationIndexTimeoutMillis = 1500L;
+
+    @Value("${iflow.sdk.output-dir:./output}")
+    private String outputDir;
 
     private final Set<Long> runningUnderstandingConversations = ConcurrentHashMap.newKeySet();
     private final Set<Long> queuedUnderstandingConversations = ConcurrentHashMap.newKeySet();
@@ -463,7 +475,11 @@ public class ConversationService {
 
         String aiUnderstanding;
         try {
-            aiUnderstanding = promptTaskService.understandRequirement(requirementSnapshot, chunk -> {
+            refreshConversationVectorMemory(snapshotConversation.getId());
+            aiUnderstanding = understandingService.understandRequirement(
+                    requirementSnapshot,
+                    snapshotConversation.getId(),
+                    chunk -> {
                 String snippet = summarizeInsightSnippet(chunk);
                 if (!snippet.isBlank()) {
                     latestInsight.set(snippet);
@@ -741,7 +757,8 @@ public class ConversationService {
 
     private void reUnderstandRequirement(Conversation conversation, String requirement, MessageDTO response) {
         try {
-            String aiUnderstanding = promptTaskService.understandRequirement(requirement);
+            refreshConversationVectorMemory(conversation.getId());
+            String aiUnderstanding = understandingService.understandRequirement(requirement, conversation.getId());
             conversation.setAiUnderstanding(aiUnderstanding);
             ConversationStage nextStage = resolveUnderstandingStage(aiUnderstanding);
             conversation.setStage(nextStage);
@@ -924,6 +941,29 @@ public class ConversationService {
 
     private String safeText(String text) {
         return text == null ? "" : text.trim();
+    }
+
+    private void refreshConversationVectorMemory(Long conversationId) {
+        if (conversationId == null) {
+            return;
+        }
+        if (!agentProperties.isUseLangChain()) {
+            return;
+        }
+        if (!agentProperties.isEnableRag() && !agentProperties.isEnableMultiAgent()) {
+            return;
+        }
+
+        try {
+            CompletableFuture<ConversationVectorService.VectorizationResult> future =
+                    conversationVectorService.indexConversationAsync(conversationId);
+            if (conversationIndexTimeoutMillis > 0) {
+                future.orTimeout(conversationIndexTimeoutMillis, TimeUnit.MILLISECONDS).join();
+            }
+        } catch (Exception e) {
+            log.warn("Conversation semantic indexing failed for conversation {}, continue without vector memory",
+                    conversationId, e);
+        }
     }
 
     private void updateProjectNameAfterUnderstanding(Conversation conversation, String requirement) {
@@ -1152,7 +1192,8 @@ public class ConversationService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "缺少需求内容，无法解析理解结果");
         }
 
-        String aiUnderstanding = promptTaskService.understandRequirement(requirement);
+        refreshConversationVectorMemory(conversationId);
+        String aiUnderstanding = understandingService.understandRequirement(requirement, conversationId);
         conversation.setAiUnderstanding(aiUnderstanding);
         conversation.setUnderstandingConfirmed(false);
         conversation.setMe2aiConfirmedAt(null);
@@ -1194,6 +1235,7 @@ public class ConversationService {
 
         boolean confirmed = request != null && Boolean.TRUE.equals(request.getConfirmed());
         if (confirmed) {
+            autoBuildContractForConfirmation(conversation);
             if (safeText(conversation.getMe2aiContractJson()).isBlank()) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "REQ Gate 未通过：缺少需求契约卡");
             }
@@ -1209,6 +1251,28 @@ public class ConversationService {
 
         conversation = conversationRepository.save(conversation);
         return convertToDTO(conversation);
+    }
+
+    private void autoBuildContractForConfirmation(Conversation conversation) {
+        if (conversation == null || !safeText(conversation.getMe2aiContractJson()).isBlank()) {
+            return;
+        }
+        if (conversation.getStage() != ConversationStage.UNDERSTANDING_CONFIRMED) {
+            return;
+        }
+
+        String aiUnderstanding = safeText(conversation.getAiUnderstanding());
+        if (aiUnderstanding.isBlank()) {
+            return;
+        }
+
+        String nextAction = extractRequirementGateValue(aiUnderstanding, "NEXT_ACTION");
+        if ("ASK_CLARIFICATION".equalsIgnoreCase(nextAction)) {
+            return;
+        }
+
+        Map<String, Object> contract = buildMe2AiContract(aiUnderstanding, safeText(conversation.getUserRequirement()));
+        conversation.setMe2aiContractJson(writeJson(contract));
     }
 
     /**
@@ -1227,22 +1291,13 @@ public class ConversationService {
         Map<String, Object> uiSpec = buildUiSpec(contract, conversation);
         sdacResourceService.validateUiSpec(uiSpec);
 
-        String prototypeHtml = safeText(conversation.getUiPrototypeContent());
-        String prototypePath = safeText(conversation.getUiPrototypePath());
-        if (prototypeHtml.isBlank()) {
-            prototypeHtml = buildDefaultPrototypeHtml(conversation, uiSpec);
-            Path htmlFile = uiPrototypeService.saveUIPrototype(conversationId, prototypeHtml);
-            prototypePath = htmlFile.toString();
-            conversation.setUiPrototypeContent(prototypeHtml);
-            conversation.setUiPrototypePath(prototypePath);
-        }
-
         conversation.setUiSpecJson(writeJson(uiSpec));
         conversation.setUiConfirmed(false);
         conversation.setUiConfirmedAt(null);
-        conversation.setStage(ConversationStage.UI_DESIGNING);
+        conversation.setStage(ConversationStage.UI_GENERATING);
         updateGateStatus(conversation, "UI", "READY_FOR_CONFIRM");
         conversation = conversationRepository.save(conversation);
+        uiPrototypeService.generateUIPrototype(conversationId);
 
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("conversation", convertToDTO(conversation));
@@ -1351,10 +1406,24 @@ public class ConversationService {
         Path manifestPath = persistEvidenceManifest(conversation, manifest);
         conversation.setEvidenceManifestPath(manifestPath.toString());
         updateGateStatus(conversation, "IMP", result);
-        if ("PASS".equals(result)) {
-            conversation.setStage(ConversationStage.READY_TO_START);
+
+        boolean pass = "PASS".equals(result);
+        boolean shouldStartCodeGeneration = pass
+                && conversation.getStage() != ConversationStage.READY_TO_START
+                && conversation.getStage() != ConversationStage.SERVICE_STARTING
+                && conversation.getStage() != ConversationStage.PREVIEWING
+                && conversation.getStage() != ConversationStage.COMPLETED;
+        if (shouldStartCodeGeneration) {
+            conversation.setStage(ConversationStage.CODE_GENERATING);
+            conversation.setStatus(Conversation.ConversationStatus.ACTIVE);
+            conversation.setServiceStatus("CODE_GENERATING");
         }
         conversationRepository.save(conversation);
+
+        if (shouldStartCodeGeneration && !codeGenerationService.isCodeGenerationInProgress(conversationId)) {
+            codeGenerationService.sendProgressMessage(conversationId, "Evidence 校验通过，开始生成代码...", "system");
+            codeGenerationService.generateCodeForConversationAsync(conversationId);
+        }
 
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("result", result);
@@ -1552,41 +1621,6 @@ public class ConversationService {
         return uiSpec;
     }
 
-    private String buildDefaultPrototypeHtml(Conversation conversation, Map<String, Object> uiSpec) {
-        String title = safeText(conversation.getProjectName());
-        if (title.isBlank()) {
-            title = "UI Prototype";
-        }
-        List<String> features = toStringList(uiSpec.get("globalStates"));
-        return """
-                <!doctype html>
-                <html lang="zh-CN">
-                <head>
-                  <meta charset="UTF-8" />
-                  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-                  <title>%s</title>
-                  <style>
-                    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #f5f7fb; color: #1f2937; }
-                    .wrap { max-width: 920px; margin: 40px auto; padding: 24px; }
-                    .card { background: #fff; border-radius: 16px; padding: 24px; box-shadow: 0 8px 28px rgba(0,0,0,0.08); }
-                    h1 { margin: 0 0 12px; font-size: 24px; }
-                    p { margin: 0 0 16px; line-height: 1.6; }
-                    ul { margin: 0; padding-left: 20px; }
-                  </style>
-                </head>
-                <body>
-                  <div class="wrap">
-                    <div class="card">
-                      <h1>%s</h1>
-                      <p>UI 设计阶段原型（可用于确认主流程）。</p>
-                      <ul><li>%s</li></ul>
-                    </div>
-                  </div>
-                </body>
-                </html>
-                """.formatted(title, title, String.join("</li><li>", nonEmptyOrDefault(features, List.of("状态管理"))));
-    }
-
     private List<Map<String, Object>> toVerificationItems(ImplementationVerifyRequest request) {
         if (request == null || request.getVerifications() == null || request.getVerifications().isEmpty()) {
             return List.of(Map.of(
@@ -1701,7 +1735,7 @@ public class ConversationService {
         if (!generatedCodePath.isBlank()) {
             return Paths.get(generatedCodePath).toAbsolutePath().normalize();
         }
-        Path fallback = Paths.get("generated-code", "conversation-" + conversation.getId()).toAbsolutePath().normalize();
+        Path fallback = Paths.get(outputDir, "conversation-" + conversation.getId()).toAbsolutePath().normalize();
         conversation.setGeneratedCodePath(fallback.toString());
         return fallback;
     }

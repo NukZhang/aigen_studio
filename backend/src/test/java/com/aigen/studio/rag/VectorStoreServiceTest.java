@@ -15,6 +15,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -32,8 +33,8 @@ class VectorStoreServiceTest {
 
     @Test
     void addTextStoresEmbeddingAndReturnsId() {
-        when(embeddingService.embed("dashboard ui requirement"))
-                .thenReturn(Embedding.from(new float[]{1.0f, 0.0f, 0.0f}));
+        when(embeddingService.embedAllSegments(anyList()))
+                .thenReturn(List.of(Embedding.from(new float[]{1.0f, 0.0f, 0.0f})));
 
         String id = vectorStoreService.addText("dashboard ui requirement");
 
@@ -43,10 +44,11 @@ class VectorStoreServiceTest {
 
     @Test
     void searchReturnsMostRelevantSegments() {
-        when(embeddingService.embed("order management module"))
-                .thenReturn(Embedding.from(new float[]{1.0f, 0.0f, 0.0f}));
-        when(embeddingService.embed("user profile center"))
-                .thenReturn(Embedding.from(new float[]{0.0f, 1.0f, 0.0f}));
+        when(embeddingService.embedAllSegments(anyList()))
+                .thenReturn(
+                        List.of(Embedding.from(new float[]{1.0f, 0.0f, 0.0f})),
+                        List.of(Embedding.from(new float[]{0.0f, 1.0f, 0.0f}))
+                );
         when(embeddingService.embed("order query"))
                 .thenReturn(Embedding.from(new float[]{1.0f, 0.0f, 0.0f}));
 

@@ -1,15 +1,15 @@
 #!/bin/bash
 
+set -euo pipefail
+
 echo "Starting AIGen Studio Backend..."
 
 cd "$(dirname "$0")/.."
 
 cd backend
 
-if [ ! -d "target" ]; then
-    echo "Building project..."
-    mvn clean install
-fi
+echo "Performing clean compile to avoid stale class artifacts..."
+mvn -q -DskipTests clean compile
 
 echo "Starting Spring Boot application..."
-mvn spring-boot:run
+mvn -q spring-boot:run
