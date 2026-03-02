@@ -1,2 +1,5 @@
 data
 generated-code
+application-local.yml
+application-local.yaml
+*.properties.local

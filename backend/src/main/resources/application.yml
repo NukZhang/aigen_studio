@@ -52,6 +52,16 @@ iflow:
     file-max-size: 104857600  # 100MB
     output-dir: ${IFLOW_OUTPUT_DIR:../../generated-code}
     permission-mode: AUTO
+  api:
+    key: ${IFLOW_API_KEY:}
+    model: qwen3-coder-plus
+
+# Feishu Bot Configuration
+feishu:
+  enabled: true
+  app-id: cli_a92bd35379b81cb3
+  app-secret: ${FEISHU_APP_SECRET:}
+  domain: feishu
 
 # GitLab Configuration
 gitlab:
